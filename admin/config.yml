@@ -1,0 +1,36 @@
+backend:
+  name: github
+  repo: bimspecialist/bim-specialist
+  branch: content-editor
+  auth_methods: [token]
+
+site_url: https://bimspecialist.github.io/bim-specialist/
+display_url: https://bimspecialist.github.io/bim-specialist/
+media_folder: assets/uploads
+public_folder: /assets/uploads
+publish_mode: simple
+
+collections:
+  - name: site
+    label: BIM Specialist
+    files:
+      - name: content
+        label: Site Content
+        file: content/site.json
+        format: json
+        fields:
+          - {label: Product name, name: product_name, widget: string}
+          - {label: Headline, name: headline, widget: string}
+          - {label: Arabic headline, name: headline_ar, widget: string, required: false}
+          - {label: Description, name: description, widget: text}
+          - {label: Arabic description, name: description_ar, widget: text, required: false}
+          - label: Features
+            name: features
+            widget: list
+            fields:
+              - {label: Title, name: title, widget: string}
+              - {label: Description, name: description, widget: text}
+          - label: Screenshots
+            name: screenshots
+            widget: list
+            field: {label: Image, name: image, widget: image}
