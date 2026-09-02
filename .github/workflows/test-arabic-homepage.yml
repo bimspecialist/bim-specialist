@@ -1,0 +1,28 @@
+name: Test Arabic Homepage Localization
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify preview and workflow badges are bilingual
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('index.html').read_text(encoding='utf-8')
+          checks=[
+            ('preview Rooms', '<span data-lang="en">Rooms</span><span data-lang="ar">الغرف</span>'),
+            ('preview Schedules', '<span data-lang="en">Schedules</span><span data-lang="ar">الجداول</span>'),
+            ('preview Model', '<span data-lang="en">Model</span><span data-lang="ar">النموذج</span>'),
+            ('preview Support', '<span data-lang="en">Support</span><span data-lang="ar">الدعم</span>'),
+            ('room badge', '<b><span data-lang="en">WORKFLOW</span><span data-lang="ar">سير عمل</span></b>'),
+            ('guide badge', '<b><span data-lang="en">GUIDE</span><span data-lang="ar">دليل</span></b>'),
+          ]
+          missing=[n for n,x in checks if x not in s]
+          if missing: raise SystemExit('Missing bilingual homepage UI: '+', '.join(missing))
+          print('PASS: bilingual preview and badges')
+          PY
