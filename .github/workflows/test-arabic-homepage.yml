@@ -1,7 +1,9 @@
 name: Test Arabic Homepage Localization
 on:
   push:
-    branches: [fix/full-arabic-homepage-20260902]
+    branches: [main]
+  pull_request:
+    branches: [main]
 jobs:
   verify:
     runs-on: ubuntu-latest
