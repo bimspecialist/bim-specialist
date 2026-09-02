@@ -1,0 +1,13 @@
+name: Verify Arabic Documentation Terms
+on:
+  push:
+    branches: [fix/arabic-doc-terms-clean-20260902]
+jobs:
+  red:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify current source still contains deprecated Arabic term
+        run: |
+          grep -q 'التوثيق' script.js
+          echo 'RED reproduced: deprecated Arabic documentation term exists in script.js.'
