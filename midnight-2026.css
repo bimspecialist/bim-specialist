@@ -1,0 +1,61 @@
+/* Midnight Tech — additive visual layer, 2026-11-01. Existing workflows unchanged. */
+:root{color-scheme:dark;--bg:#080d19;--ink:#edf5ff;--muted:#a9bcd5;--blue:#70ccff;--cyan:#89d9ff;--line:#2a4160;--panel:#111b30;--radius:17px;--shadow-sm:0 14px 34px rgba(0,0,0,.23);--shadow-md:0 26px 70px rgba(0,0,0,.34)}
+html{scroll-padding-top:88px}
+body{background:radial-gradient(ellipse 60% 28% at 82% 0%,rgba(68,98,187,.17),transparent 76%),radial-gradient(ellipse 55% 22% at 8% 45%,rgba(117,75,182,.09),transparent 73%),var(--bg);color:var(--ink)}
+:focus-visible{outline:3px solid #93d9ff;outline-offset:3px}
+.nav,.nav.scrolled{background:rgba(8,13,25,.93);border-color:var(--line);box-shadow:0 5px 26px #0002}
+.brand b,h1 span,h2 span{color:#8ad6ff}
+.brandMark{color:#071324;background:linear-gradient(135deg,#72d2ff,#9f90ff);box-shadow:0 5px 24px #459bff24}
+.navLinks,.navLinks>a{color:#bdcde0}
+.navLinks>a:hover,.navLinks>a:focus-visible{color:#fff}
+.navLinks>a:after{background:linear-gradient(90deg,#6dcfff,#9c85fa)}
+.langSwitch{border-color:var(--line);background:#10223b}
+.langSwitch button{color:#c5d9ed;background:transparent}
+.langSwitch button.active{color:#07192b;background:#87d9ff}
+.mobileMenuToggle{background:#152740;color:#e9f5ff;border-color:#3a5677}
+.hero{gap:clamp(24px,4.5vw,70px)}
+.hero h1{letter-spacing:-.045em}
+html[dir=rtl] .hero h1{letter-spacing:0}
+.lead,.sectionHead p{color:var(--muted)}
+.eyebrow,.kicker{color:#8dd8ff}
+.btn{background:#182b46;color:#ecf6ff;border:1px solid #365474;transition:transform .16s ease,border-color .16s ease,background .16s ease,box-shadow .16s ease}
+.btn:hover{background:#203954;border-color:#79b9f4;transform:translateY(-2px)}
+.btn.primary{color:#05172a;background:linear-gradient(120deg,#73d5ff,#a8b8ff);border-color:#a0dbfc;box-shadow:0 12px 34px #428ced33}
+.btn.primary:hover{background:linear-gradient(120deg,#a1e5ff,#c5c5ff);box-shadow:0 14px 40px #428ced45}
+.stats{border-color:var(--line)}
+.stats small{color:#a8bbd4}
+.heroVisual{background:linear-gradient(145deg,#15243c,#0c1526);border-color:#2c4563;box-shadow:var(--shadow-md)}
+.heroVisual:hover{box-shadow:0 34px 85px #0007}
+.visualTag,.valueGrid article,.tool,.priceCard,.faqGrid details,.card,.guideCard,.ecosystem,.docsNav,.docsSection,.supportGrid>.card{background:#111e33;color:#edf5ff;border-color:#294261;box-shadow:0 10px 36px #0002}
+.valueGrid p,.tool p,.priceCard p,.faqGrid p,.legal p,.legal li,.docsSection p,.docsSection li,.guideCard p,.ecosystem p{color:#a8bbd4}
+.valueIcon,.tool i{background:#1e3455;color:#90d9ff}
+.tool>b,.tool.free>b{background:#24213c;color:#c0a6ff}
+.tool:hover,.guideCard:hover{background:#172940;border-color:#5888b7;transform:translateY(-3px)}
+.galleryBand{background:linear-gradient(145deg,#0a1426,#111e37)}
+.gallery figure,.interfaceCard{background:#13213a;border-color:#314d71}
+.gallery figure:hover{border-color:#7eb5ef}
+.gallery figcaption,.performanceNote{color:#afc4e0}
+.price{color:#ecf6ff}
+.faqGrid details{background:#111e33}
+.faqGrid summary{color:#f3f8ff}
+.footer{background:#0b1526;border-color:var(--line);color:#a9bdd6}
+.footer a:hover{color:#9cddff}
+.productPreview{background:#111d30;border-color:#355170;box-shadow:0 20px 50px #0003}
+.previewBar{background:#162943;border-color:#294564;color:#eaf6ff}
+.previewStatus{background:#103c38;color:#95e9d5}
+.previewBody{background:#0e1b2d}
+.previewRail{background:#0b1424;color:#d2e6fa}
+.previewNav span{background:#172743;color:#bcd2e9}
+.previewNav span:first-child{background:#254c83;color:#fff}
+.previewCanvas{background:linear-gradient(145deg,#122541,#0c182b)}
+.previewRibbon span,.previewPanel{background:#172c49;color:#edf6ff;border-color:#325274;box-shadow:0 6px 16px #0002}
+.previewPanel p{color:#b3c6de}
+.previewMetrics span{background:#203953;color:#d7e9ff}
+.interfaceScreen{background:linear-gradient(145deg,#152a46,#1c3553);color:#eef6ff}
+.interfaceScreen .rail{background:#0c1a31}
+.interfaceScreen .block{background:#27405e;border-color:#3b5e7d}
+.docsNav a,.guideCard li{color:#b5cae2}
+.docsNav a:hover{background:#203958;color:#e5f7ff}
+.docsSection code,.callout,.guideNote,.ecosystemCard{background:#1b3150;color:#e1efff;border-color:#345676}
+@media(max-width:680px){.hero{padding-top:57px}.productPreview{min-height:0}.nav{backdrop-filter:none}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition:none!important;animation:none!important}}
