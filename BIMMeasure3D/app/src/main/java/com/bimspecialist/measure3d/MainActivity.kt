@@ -13,6 +13,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -61,6 +66,20 @@ private fun MeasureApp() {
     fun tr(ar: String, en: String) = if (arabic) ar else en
 
     val store = remember(context) { MeasurementStore(context) }
+    val projectStore = remember(context) { ProjectStore(context) }
+    var projects by remember { mutableStateOf(projectStore.load()) }
+    var projectId by remember { mutableStateOf(projectStore.selectedId()) }
+    var projectPicker by remember { mutableStateOf(false) }
+    var projectInput by remember { mutableStateOf("") }
+    var projectError by remember { mutableStateOf("") }
+    var referenceDialog by remember { mutableStateOf(false) }
+    var referenceInput by remember { mutableStateOf("") }
+    var referenceError by remember { mutableStateOf("") }
+    var referenceResult by remember { mutableStateOf<ReferenceResult?>(null) }
+    var extrusionHeightInput by remember { mutableStateOf("0.20") }
+    var solidPreview by remember { mutableStateOf<SolidMesh?>(null) }
+    var extrudeReverse by remember { mutableStateOf(false) }
+    var scanStats by remember { mutableStateOf<CloudStats?>(null) }
     var savedRecords by remember { mutableStateOf(store.load()) }
     var showHistory by remember { mutableStateOf(false) }
     var pendingMode by remember { mutableStateOf<ToolMode?>(null) }
@@ -111,6 +130,7 @@ private fun MeasureApp() {
         overlay = emptyList()
     }
     fun resetScan() {
+        scanStats = null
         scanning = false
         preview = null
         sampler.clear()
@@ -120,6 +140,8 @@ private fun MeasureApp() {
     fun switchNow(next: ToolMode) {
         clearAnchors()
         resetScan()
+        referenceResult = null
+        solidPreview = null
         mode = next
         message = when (next) {
             ToolMode.LENGTH -> tr("انقر على نقطتين على السطح لقياس المسافة.", "Tap two points on a detected plane.")
@@ -131,8 +153,20 @@ private fun MeasureApp() {
         if (next == mode) return
         if (anchors.isNotEmpty() || sampler.count() > 0) pendingMode = next else switchNow(next)
     }
-    DisposableEffect(Unit) {
-        onDispose { anchors.forEach { it.detach() }; frameRef[0] = null }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                scanning = false
+                frameRef[0] = null
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            anchors.forEach { it.detach() }
+            frameRef[0] = null
+        }
     }
     val vertices = anchors.map { anchor ->
         val t = anchor.pose.translation
@@ -155,7 +189,7 @@ private fun MeasureApp() {
         val value = measured ?: return
         val kind = if (mode == ToolMode.LENGTH) "LENGTH" else "AREA"
         try {
-            store.add(kind, value, perimeter, vertices)
+            store.add(kind, value, perimeter, vertices, projectId)
             savedRecords = store.load()
             message = tr("تم حفظ القياس محليًا في السجل.", "Measurement saved locally.")
         } catch (e: Exception) {
@@ -219,17 +253,29 @@ private fun MeasureApp() {
                     }
                 },
                 onTouchEvent = { event, _ ->
-                    if (event.actionMasked == MotionEvent.ACTION_UP && mode != ToolMode.SCAN && !showHistory && pendingMode == null) {
+                    if (event.actionMasked == MotionEvent.ACTION_UP && mode != ToolMode.SCAN && !showHistory && !projectPicker && !referenceDialog && pendingMode == null) {
                         val hit = frameRef[0]?.hitTest(event)?.firstOrNull {
                             it.trackable is Plane && (it.trackable as Plane).isPoseInPolygon(it.hitPose)
                         }
-                        if (hit == null) {
+                        if (frameRef[0]?.camera?.trackingState != TrackingState.TRACKING) {
+                            message = tr("تعذر تثبيت النقطة. انتظر استقرار التتبع.", "Tracking unstable. Try again when tracking is active.")
+                        } else if (hit == null) {
                             message = tr("لم يتم العثور على سطح. حرّك الكاميرا ببطء.", "No detected plane. Move the camera slowly.")
                         } else if ((mode == ToolMode.LENGTH && anchors.size < 2) ||
                             (mode == ToolMode.AREA && anchors.size < 24)) {
                             try {
-                                anchors.add(hit.createAnchor())
-                                message = tr("أضيفت النقطة ${anchors.size}.", "Point ${anchors.size} added.")
+                                val distance = hit.hitPose.translation.let { h ->
+                                    val t = frameRef[0]!!.camera.pose.translation
+                                    Vec3(h[0].toDouble(), h[1].toDouble(), h[2].toDouble())
+                                        .distanceTo(Vec3(t[0].toDouble(), t[1].toDouble(), t[2].toDouble()))
+                                }
+                                if (distance > 8.0 || distance < 0.1) {
+                                    message = tr("اختر سطحًا يبعد بين 10 سم و8 أمتار.", "Select a surface between 0.1 and 8 metres away.")
+                                } else {
+                                    anchors.add(hit.createAnchor())
+                                    referenceResult = null
+                                    message = tr("أضيفت النقطة ${anchors.size}.", "Point ${anchors.size} added.")
+                                }
                             } catch (e: Exception) {
                                 message = e.localizedMessage ?: "AR error"
                             }
@@ -278,10 +324,22 @@ private fun MeasureApp() {
                             Text("BIM SPECIALIST  •  v0.2 Beta", fontSize = 10.sp, color = paleBlue)
                         }
                         OutlinedButton(onClick = { showHistory = true }, contentPadding = PaddingValues(horizontal = 10.dp)) {
-                            Text(tr("السجل (${savedRecords.size})", "History (${savedRecords.size})"), fontSize = 12.sp)
+                            Text(tr("السجل (${savedRecords.count { it.projectId == projectId }})", "History (${savedRecords.count { it.projectId == projectId }})"), fontSize = 12.sp)
                         }
                     }
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(5.dp))
+                    OutlinedButton(
+                        onClick = { projectPicker = true },
+                        modifier = Modifier.fillMaxWidth().height(36.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                    ) {
+                        Text(
+                            tr("المشروع: ", "Project: ") +
+                                (if (projectId == "general") tr("عام", "General") else projects.firstOrNull { it.id == projectId }?.name ?: "General"),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp
+                        )
+                    }
+                    Spacer(Modifier.height(7.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                         ToolTab(tr("الطول", "Length"), mode == ToolMode.LENGTH, Modifier.weight(1f)) { requestMode(ToolMode.LENGTH) }
                         ToolTab(tr("المساحة", "Area"), mode == ToolMode.AREA, Modifier.weight(1f)) { requestMode(ToolMode.AREA) }
@@ -307,6 +365,13 @@ private fun MeasureApp() {
                         ToolMode.SCAN -> tr("النقاط: ", "Points: ") + scanCount
                     }
                     Text(primary, fontSize = 23.sp, fontWeight = FontWeight.Bold, color = paleBlue)
+                    if (mode == ToolMode.LENGTH && referenceResult != null) {
+                        Text(
+                            tr("فرق المرجع: ", "Reference difference: ") +
+                                String.format(Locale.US, "%.2f%%", referenceResult!!.errorPercent),
+                            fontSize = 12.sp, color = warningAmber
+                        )
+                    }
                     if (perimeter != null) {
                         Text(tr("المحيط: ", "Perimeter: ") + MeasureFormat.distance(perimeter, unit),
                             color = Color.White, fontSize = 13.sp)
@@ -317,6 +382,8 @@ private fun MeasureApp() {
                 Column(
                     Modifier.fillMaxWidth()
                         .background(Brush.verticalGradient(listOf(Color(0xE7182F4B), Color(0xFC081323))))
+                        .heightIn(max = 330.dp)
+                        .verticalScroll(rememberScrollState())
                         .padding(horizontal = 14.dp, vertical = 13.dp)
                 ) {
                     Text(
@@ -334,6 +401,7 @@ private fun MeasureApp() {
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 OutlinedButton(onClick = {
                                     if (anchors.isNotEmpty()) {
+                                        referenceResult = null
                                         anchors.removeAt(anchors.lastIndex).detach()
                                         overlay = emptyList()
                                     }
@@ -341,7 +409,7 @@ private fun MeasureApp() {
                                     contentPadding = PaddingValues(horizontal = 3.dp)) {
                                     Text(tr("تراجع", "Undo"), fontSize = 12.sp)
                                 }
-                                OutlinedButton(onClick = { clearAnchors() }, enabled = anchors.isNotEmpty(),
+                                OutlinedButton(onClick = { referenceResult = null; clearAnchors() }, enabled = anchors.isNotEmpty(),
                                     modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 3.dp)) {
                                     Text(tr("مسح", "Clear"), fontSize = 12.sp)
                                 }
@@ -369,6 +437,81 @@ private fun MeasureApp() {
                                     Text(tr("تصدير CSV", "CSV"), fontSize = 12.sp)
                                 }
                             }
+                            if (mode == ToolMode.LENGTH && measured != null) {
+                                TextButton(
+                                    onClick = { referenceInput = ""; referenceError = ""; referenceDialog = true }
+                                ) { Text(tr("التحقق بمقياس مرجعي", "Check against tape-measure reference"), fontSize = 12.sp) }
+                            }
+                            if (mode == ToolMode.AREA && measured != null) {
+                                Spacer(Modifier.height(4.dp))
+                                HorizontalDivider()
+                                Text(
+                                    tr("إنشاء مجسم هندسي من المساحة، وليس من المسح بالكاميرا.",
+                                       "Generate a solid from the area outline, not from a 3D scan."),
+                                    fontSize = 11.sp, color = paleBlue
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                    OutlinedTextField(
+                                        value = extrusionHeightInput,
+                                        onValueChange = { if (it.length <= 12) extrusionHeightInput = it },
+                                        modifier = Modifier.weight(1f),
+                                        label = { Text(tr("ارتفاع المجسم (م)", "Extrusion height (m)"), fontSize = 11.sp) },
+                                        singleLine = true,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                                    )
+                                    FilterChip(
+                                        selected = extrudeReverse,
+                                        onClick = { extrudeReverse = !extrudeReverse },
+                                        label = { Text(tr("عكس الاتجاه", "Reverse"), fontSize = 10.sp) }
+                                    )
+                                }
+                                Text(
+                                    tr("يُصدّر المجسم بوحدة mm. اتجاه البثق يتبع ترتيب النقاط.",
+                                       "Exports use mm. Extrusion direction depends on vertex order."),
+                                    fontSize = 10.sp, color = warningAmber
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    OutlinedButton(
+                                        modifier = Modifier.weight(1f),
+                                        onClick = {
+                                            try {
+                                                val h = extrusionHeightInput.trim().replace(',', '.').toDoubleOrNull()
+                                                    ?: throw IllegalArgumentException("Enter a valid height in metres")
+                                                solidPreview = Extrusion.fromPolygon(vertices, h, extrudeReverse)
+                                            } catch (e: Exception) {
+                                                message = tr("تعذر إنشاء المعاينة: ", "Solid preview failed: ") + (e.localizedMessage ?: "")
+                                            }
+                                        }
+                                    ) { Text("3D") }
+                                    OutlinedButton(
+                                        modifier = Modifier.weight(1f),
+                                        onClick = {
+                                            try {
+                                                val h = extrusionHeightInput.trim().replace(',', '.').toDoubleOrNull()
+                                                    ?: throw IllegalArgumentException("Enter a valid height in metres")
+                                                val solid = Extrusion.fromPolygon(vertices, h, extrudeReverse)
+                                                export("measured_outline_solid_mm.stl", MeshExports.stlMillimetres(solid))
+                                            } catch (e: Exception) {
+                                                message = tr("تعذر إنشاء STL: ", "STL export failed: ") + (e.localizedMessage ?: "")
+                                            }
+                                        }
+                                    ) { Text("STL") }
+                                    OutlinedButton(
+                                        modifier = Modifier.weight(1f),
+                                        onClick = {
+                                            try {
+                                                val h = extrusionHeightInput.trim().replace(',', '.').toDoubleOrNull()
+                                                    ?: throw IllegalArgumentException("Enter a valid height in metres")
+                                                val solid = Extrusion.fromPolygon(vertices, h, extrudeReverse)
+                                                export("measured_outline_solid_mm.obj", MeshExports.objMillimetres(solid))
+                                            } catch (e: Exception) {
+                                                message = tr("تعذر إنشاء OBJ: ", "OBJ export failed: ") + (e.localizedMessage ?: "")
+                                            }
+                                        }
+                                    ) { Text("OBJ") }
+                                }
+                            }
                         }
                         ToolMode.SCAN -> {
                             Text(tr(
@@ -376,12 +519,22 @@ private fun MeasureApp() {
                                 "Sparse point cloud only. Not a printable model or precision survey."
                             ), fontSize = 11.sp, color = warningAmber)
                             Spacer(Modifier.height(4.dp))
+                            if (scanStats != null) {
+                                Text(
+                                    tr("امتداد النقاط (م): ", "Point bounds (m): ") +
+                                    String.format(Locale.US, "%.2f × %.2f × %.2f",
+                                        scanStats!!.spanX, scanStats!!.spanY, scanStats!!.spanZ),
+                                    fontSize = 11.sp, color = paleBlue
+                                )
+                            }
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Button(onClick = {
                                     if (scanning) {
                                         scanning = false
+                                        scanStats = CloudAnalysis.compute(sampler.snapshot())
                                         message = tr("توقف المسح مؤقتًا. يمكنك استكماله.", "Paused. Resume to add more points.")
                                     } else {
+                                        scanStats = null
                                         preview = null
                                         scanning = true
                                         message = tr("حرّك الكاميرا ببطء حول الجسم.", "Move slowly around the object.")
@@ -420,16 +573,100 @@ private fun MeasureApp() {
             }
         }
 
+        if (solidPreview != null) {
+            SolidPreviewDialog(mesh = solidPreview!!, arabic = arabic, onDismiss = { solidPreview = null })
+        }
+        if (projectPicker) {
+            AlertDialog(
+                onDismissRequest = { projectPicker = false },
+                title = { Text(tr("المشاريع المحلية", "Local projects")) },
+                text = {
+                    Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                        projects.forEach { project ->
+                            TextButton(
+                                onClick = {
+                                    projectStore.select(project.id)
+                                    projectId = project.id
+                                    projectPicker = false
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    (if (project.id == projectId) "✓  " else "") +
+                                        (if (project.id == "general") tr("عام", "General") else project.name),
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                        HorizontalDivider()
+                        OutlinedTextField(
+                            value = projectInput,
+                            onValueChange = { if (it.length <= 40) projectInput = it },
+                            label = { Text(tr("اسم مشروع جديد", "New project name")) },
+                            singleLine = true
+                        )
+                        if (projectError.isNotEmpty()) Text(projectError, color = warningAmber, fontSize = 12.sp)
+                        TextButton(onClick = {
+                            try {
+                                val project = projectStore.create(projectInput)
+                                projects = projectStore.load()
+                                projectId = project.id
+                                projectInput = ""
+                                projectError = ""
+                                projectPicker = false
+                            } catch (e: Exception) {
+                                projectError = e.localizedMessage ?: tr("اسم المشروع غير صالح", "Invalid project name")
+                            }
+                        }) { Text(tr("إنشاء مشروع", "Create project")) }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { projectPicker = false }) { Text(tr("إغلاق", "Close")) } }
+            )
+        }
+        if (referenceDialog) {
+            AlertDialog(
+                onDismissRequest = { referenceDialog = false },
+                title = { Text(tr("التحقق بقياس مرجعي", "Reference validation")) },
+                text = {
+                    Column {
+                        Text(tr("أدخل الطول المعروف باستخدام شريط قياس بوحدة المتر. النتيجة للمقارنة فقط ولا تُصحح معايرة الكاميرا.",
+                            "Enter the tape-measured length in metres. This is an independent comparison, not camera calibration."),
+                            fontSize = 13.sp)
+                        OutlinedTextField(
+                            value = referenceInput,
+                            onValueChange = { if (it.length <= 14) referenceInput = it },
+                            label = { Text(tr("الطول المرجعي (م)", "Reference length (m)")) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true
+                        )
+                        if (referenceError.isNotBlank()) Text(referenceError, color = warningAmber, fontSize = 12.sp)
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        try {
+                            val reference = referenceInput.trim().replace(',', '.').toDoubleOrNull()
+                                ?: throw IllegalArgumentException("Enter numeric length")
+                            referenceResult = ReferenceCheck.compare(measured ?: 0.0, reference)
+                            referenceDialog = false
+                            message = tr("فرق القياس المرجعي: ", "Measured reference error: ") +
+                                String.format(Locale.US, "%.2f%%", referenceResult!!.errorPercent)
+                        } catch (e: Exception) { referenceError = e.localizedMessage ?: "Invalid reference" }
+                    }) { Text(tr("احسب الفرق", "Compare")) }
+                },
+                dismissButton = { TextButton(onClick = { referenceDialog = false }) { Text(tr("إلغاء", "Cancel")) } }
+            )
+        }
         if (showHistory) {
             AlertDialog(
                 onDismissRequest = { showHistory = false },
-                title = { Text(tr("سجل القياسات المحلي", "Saved measurements")) },
+                title = { Text(tr("سجل المشروع", "Project history")) },
                 text = {
                     Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
-                        if (savedRecords.isEmpty()) {
+                        if (savedRecords.none { it.projectId == projectId }) {
                             Text(tr("لا توجد قياسات محفوظة بعد.", "No saved measurements yet."))
                         }
-                        savedRecords.forEach { record ->
+                        savedRecords.filter { it.projectId == projectId }.forEach { record ->
                             HorizontalDivider()
                             Spacer(Modifier.height(8.dp))
                             Text(

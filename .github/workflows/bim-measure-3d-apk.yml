@@ -12,7 +12,7 @@ permissions:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -31,18 +31,24 @@ jobs:
           gradle-version: '8.13'
       - name: Test and assemble Android APK
         working-directory: BIMMeasure3D
-        run: gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:assembleDebug
+        run: gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: BIMMeasure3D-0.2-beta-test-results
+          name: BIMMeasure3D-0.3-beta-test-results
           path: BIMMeasure3D/app/build/test-results/testDebugUnitTest/
           if-no-files-found: ignore
+      - name: Verify APK package and debug signature
+        working-directory: BIMMeasure3D
+        run: |
+          unzip -t app/build/outputs/apk/debug/app-debug.apk | tail -n 2
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging app/build/outputs/apk/debug/app-debug.apk | grep "package: name='com.bimspecialist.measure3d'"
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BIMMeasure3D-0.2-beta-debug-apk
+          name: BIMMeasure3D-0.3-beta-debug-apk
           path: BIMMeasure3D/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 90

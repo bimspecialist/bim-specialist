@@ -11,7 +11,8 @@ data class SavedMeasurement(
     val valueMeters: Double,
     val perimeterMeters: Double?,
     val points: List<Vec3>,
-    val timestampMillis: Long
+    val timestampMillis: Long,
+    val projectId: String = "general"
 )
 
 class MeasurementStore(context: Context) {
@@ -37,7 +38,8 @@ class MeasurementStore(context: Context) {
                         valueMeters = item.getDouble("valueMeters"),
                         perimeterMeters = if (item.isNull("perimeterMeters")) null else item.getDouble("perimeterMeters"),
                         points = points,
-                        timestampMillis = item.getLong("timestampMillis")
+                        timestampMillis = item.getLong("timestampMillis"),
+                        projectId = item.optString("projectId", "general").ifBlank { "general" }
                     ))
                 }
             }
@@ -60,12 +62,16 @@ class MeasurementStore(context: Context) {
                 .put("perimeterMeters", m.perimeterMeters ?: JSONObject.NULL)
                 .put("points", points)
                 .put("timestampMillis", m.timestampMillis)
+                .put("projectId", m.projectId)
             )
         }
-        prefs.edit().putString(key, array.toString()).apply()
+        check(prefs.edit().putString(key, array.toString()).commit()) { "Could not save measurements" }
     }
 
-    fun add(kind: String, value: Double, perimeter: Double?, points: List<Vec3>): SavedMeasurement {
+    fun add(kind: String, value: Double, perimeter: Double?, points: List<Vec3>, projectId: String = "general"): SavedMeasurement {
+        require(projectId.isNotBlank())
+        require(points.size in 2..64 && points.all { it.isFinite() })
+        require(perimeter == null || perimeter.isFinite())
         require(kind == "LENGTH" || kind == "AREA")
         require(value.isFinite() && value >= 0)
         val record = SavedMeasurement(
@@ -74,7 +80,8 @@ class MeasurementStore(context: Context) {
             valueMeters = value,
             perimeterMeters = perimeter,
             points = points.toList(),
-            timestampMillis = System.currentTimeMillis()
+            timestampMillis = System.currentTimeMillis(),
+            projectId = projectId
         )
         persist(listOf(record) + load())
         return record
