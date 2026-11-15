@@ -1,5 +1,11 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
+// A signed build is only available when CI provides a persistent, private keystore.
+val bimSigningEnabled = listOf(
+    "BIM_ANDROID_KEYSTORE_PATH", "BIM_ANDROID_STORE_PASSWORD",
+    "BIM_ANDROID_KEY_ALIAS", "BIM_ANDROID_KEY_PASSWORD"
+).all { !System.getenv(it).isNullOrBlank() }
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -13,10 +19,26 @@ android {
         applicationId = "com.bimspecialist.measure3d"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0-beta"
+        versionCode = 4
+        versionName = "0.4.0-beta"
     }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
+    signingConfigs {
+        if (bimSigningEnabled) {
+            create("bimProduction") {
+                storeFile = file(System.getenv("BIM_ANDROID_KEYSTORE_PATH"))
+                storePassword = System.getenv("BIM_ANDROID_STORE_PASSWORD")
+                keyAlias = System.getenv("BIM_ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("BIM_ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = false
+            if (bimSigningEnabled) signingConfig = signingConfigs.getByName("bimProduction")
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
@@ -33,5 +55,6 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.11.0")
     implementation("io.github.sceneview:arsceneview:4.18.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
+    implementation("androidx.core:core-ktx:1.17.0")
     testImplementation("junit:junit:4.13.2")
 }

@@ -9,3 +9,9 @@ local.properties
 *.jks
 *.keystore
 .DS_Store
+
+# Signing keys and secrets must never be committed.
+*.p12
+*.pfx
+*.pem
+signing.properties

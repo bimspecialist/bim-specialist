@@ -1,0 +1,140 @@
+name: BIM Measure 3D - Signed Android Release
+on:
+  push:
+    branches:
+      - bim-measure-3d-android-build
+    paths:
+      - 'BIMMeasure3D/**'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  signed-release:
+    # Release requires an explicit commit message marker after signing secrets are configured.
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[signed-release]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Install JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Android SDK
+        uses: android-actions/setup-android@v4
+      - name: Android API 36
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Prepare private keystore in temporary runner directory
+        env:
+          BIM_KEYSTORE_B64: ${{ secrets.BIM_ANDROID_KEYSTORE_BASE64 }}
+          BIM_ANDROID_STORE_PASSWORD: ${{ secrets.BIM_ANDROID_STORE_PASSWORD }}
+          BIM_ANDROID_KEY_PASSWORD: ${{ secrets.BIM_ANDROID_KEY_PASSWORD }}
+          BIM_ANDROID_KEY_ALIAS: ${{ secrets.BIM_ANDROID_KEY_ALIAS }}
+          BIM_SIGNING_CERT_SHA256: ${{ secrets.BIM_ANDROID_CERT_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for required in BIM_KEYSTORE_B64 BIM_ANDROID_STORE_PASSWORD BIM_ANDROID_KEY_PASSWORD BIM_ANDROID_KEY_ALIAS BIM_SIGNING_CERT_SHA256; do
+            if [ -z "${!required:-}" ]; then
+              echo "::error::Missing required signing secret: $required"
+              exit 1
+            fi
+          done
+          umask 077
+          printf '%s' "$BIM_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/bim-measure-signing.p12"
+          test -s "$RUNNER_TEMP/bim-measure-signing.p12"
+          echo "BIM_ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/bim-measure-signing.p12" >> "$GITHUB_ENV"
+      - name: Build and test signed release
+        working-directory: BIMMeasure3D
+        env:
+          BIM_ANDROID_STORE_PASSWORD: ${{ secrets.BIM_ANDROID_STORE_PASSWORD }}
+          BIM_ANDROID_KEY_PASSWORD: ${{ secrets.BIM_ANDROID_KEY_PASSWORD }}
+          BIM_ANDROID_KEY_ALIAS: ${{ secrets.BIM_ANDROID_KEY_ALIAS }}
+        run: gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:lintRelease :app:assembleRelease
+      - name: Verify signing identity and package metadata
+        id: verify
+        shell: bash
+        env:
+          EXPECTED_CERT_SHA256: ${{ secrets.BIM_ANDROID_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          APK="BIMMeasure3D/app/build/outputs/apk/release/app-release.apk"
+          test -s "$APK"
+          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
+          "$APKSIGNER" verify --verbose "$APK"
+          actual="$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
+          expected="$(printf '%s' "$EXPECTED_CERT_SHA256" | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          test -n "$actual"
+          if [ "${actual,,}" != "$expected" ]; then
+            echo "::error::Signing certificate differs from the pinned release identity"
+            exit 1
+          fi
+          LINE="$("$AAPT" dump badging "$APK" | head -n 1)"
+          echo "$LINE" | grep "package: name='com.bimspecialist.measure3d'"
+          VERSION_CODE="$(printf '%s' "$LINE" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")"
+          VERSION_NAME="$(printf '%s' "$LINE" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")"
+          test "$VERSION_CODE" -ge 4
+          echo "$VERSION_NAME" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$'
+          TAG="bim-measure-3d-v$VERSION_NAME"
+          APK_NAME="BIMMeasure3D-v$VERSION_NAME.apk"
+          SHA="$(sha256sum "$APK" | cut -d ' ' -f 1)"
+          SIZE="$(stat -c '%s' "$APK")"
+          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "APK_NAME=$APK_NAME" >> "$GITHUB_ENV"
+          echo "APK_SHA256=$SHA" >> "$GITHUB_ENV"
+          echo "APK_SIZE=$SIZE" >> "$GITHUB_ENV"
+          echo "Release app signing SHA-256: $actual"
+      - name: Create immutable GitHub release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::Release tag already exists. Increase Android versionCode and versionName."
+            exit 1
+          fi
+          cp BIMMeasure3D/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/$APK_NAME"
+          gh release create "$TAG" "$RUNNER_TEMP/$APK_NAME" \
+            --target "$GITHUB_SHA" \
+            --title "BIM Measure 3D $VERSION_NAME (signed)" \
+            --notes "Signed Android build using the pinned BIM Measure 3D signing certificate. Updates preserve app data when package name and certificate match. Camera accuracy and hardware behavior remain subject to device testing." \
+            --prerelease --latest=false
+      - name: Publish verified update metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          export VERSION_CODE VERSION_NAME APK_SHA256 APK_SIZE TAG APK_NAME
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          info = {
+              "packageName": "com.bimspecialist.measure3d",
+              "versionCode": int(os.environ["VERSION_CODE"]),
+              "versionName": os.environ["VERSION_NAME"],
+              "apkUrl": "https://github.com/bimspecialist/bim-specialist/releases/download/" +
+                          os.environ["TAG"] + "/" + os.environ["APK_NAME"],
+              "sha256": os.environ["APK_SHA256"],
+              "sizeBytes": int(os.environ["APK_SIZE"])
+          }
+          target = Path("BIMMeasure3D/updates/latest.json")
+          target.parent.mkdir(parents=True, exist_ok=True)
+          target.write_text(json.dumps(info, indent=2, ensure_ascii=False) + "\n")
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add BIMMeasure3D/updates/latest.json
+          git commit -m "ci(android): publish $VERSION_NAME signed update metadata [skip ci]"
+          git push origin "HEAD:bim-measure-3d-android-build"
+      - name: Cleanup temporary signing file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/bim-measure-signing.p12"

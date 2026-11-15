@@ -1,6 +1,16 @@
-# BIM Measure 3D · v0.3.0 Beta
+# BIM Measure 3D · v0.4.0 Beta
 
 Experimental Android engineering measurement and modeling app by BIM Specialist.
+
+## Upgrade without uninstalling
+
+The **installed release signing certificate must remain identical for the entire lifetime of this Android application**. Versions 0.2/0.3 were CI-signed with different temporary debug keys, which prevents seamless upgrades. Starting in v0.4, the production release workflow requires a permanent PKCS12 signing key stored exclusively in GitHub Actions Secrets. The source code and repository never contain that private key.
+
+**No production-signed APK exists until the owner completes the one-time GitHub Actions secrets setup and launches a signed-release build.** See [SIGNING_SETUP_AR.md](SIGNING_SETUP_AR.md). The normal CI debug APK remains a test artifact only, **not the permanent-install version**.
+
+After the first signed release is installed, the app checks a pinned HTTPS update manifest on app launch and on demand. When a newer signed release exists, the user can download it in-app; SHA-256 and file length are checked before Android's installer prompts for approval. Updates preserve project data when the signing certificate and package name match. Android does not permit unconsented silent installs for ordinary sideloaded apps.
+
+**Backup / restore:** Open the Projects dialog and export all project/measurement records to a JSON archive. Restoring an archive validates its contents and requests confirmation before replacing local records. Backup files contain potentially sensitive site coordinates: store them securely and do not post them publicly.
 
 ## Three independent work modes
 
@@ -42,10 +52,14 @@ In **Area** mode, after selecting a valid polygon, specify **Extrusion height (m
 - This version is limited to supported Android ARCore devices. Runtime camera permission is necessary.
 - Projects and measurement history are local in Android SharedPreferences (100 most recent records). Point-cloud data are stored in memory until the user exports them; they are not retained when the process is terminated.
 - No app backend or account; the app's own code does not upload measurement data. Android/Google AR services may have their own service behavior.
-- If upgrading from a previously installed CI **debug APK**, signing certificates may differ between CI runs. Android may reject installing the new APK over the old one. **Uninstalling deletes locally saved measurements**. Export important results first. For ongoing updates a securely stored, persistent release-signing key is required.
+- If upgrading from a previously installed CI **debug APK**, the signatures are different from the new long-lived release. Android may require one final clean installation after you have exported important data. After that, keep the fixed signing key and install newer signed versions without uninstalling.
 - Imported STL/OBJ models may require cleanup and independently verified units for production fabrication.
 
 ## Validation
+
+The fixed-key signing workflow is separate: `.github/workflows/bim-measure-3d-release.yml`.
+Release jobs are gated by an explicit `[signed-release]` commit marker or manual workflow dispatch. They fail safely if signing secrets are missing; they do not auto-generate another signing key. Production release artifacts are uploaded under a dedicated `bim-measure-3d-v...` tag to avoid changing unrelated product releases.
+
 
 GitHub Actions workflow: `.github/workflows/bim-measure-3d-apk.yml`.
 On `bim-measure-3d-android-build` it runs:
@@ -76,3 +90,4 @@ JDK 21, Gradle 8.13, Android SDK 36, Android Gradle Plugin 8.13.2, Kotlin 2.3.21
 - `0.1.0-alpha`: ARCore prototype, DXF/PLY
 - `0.2.0-beta`: overlays, area perimeter, units, local history, CSV, XYZ and tests
 - `0.3.0-beta`: named local projects, tape-reference error comparison, real watertight extrusion STL/OBJ from area, interactive solid preview, cloud bounding dimensions, adaptive icon, lifecycle cleanup, extra tests and lint
+- `0.4.0-beta`: persistent release-signing workflow (requires owner secrets), in-app version checks and verified package installation with Android user consent, full JSON backup/restore, update validation tests and clearer CI debug labeling.

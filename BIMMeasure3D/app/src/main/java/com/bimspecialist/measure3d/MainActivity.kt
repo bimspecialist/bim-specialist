@@ -1,6 +1,11 @@
 package com.bimspecialist.measure3d
 
 import android.os.Bundle
+import android.app.Activity
+import java.io.File
+import com.bimspecialist.measure3d.updates.AppUpdater
+import com.bimspecialist.measure3d.updates.AppUpdate
+import kotlinx.coroutines.launch
 import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -70,6 +75,7 @@ private fun MeasureApp() {
     val prefs = remember(context) {
         context.applicationContext.getSharedPreferences("bim_measure_display", android.content.Context.MODE_PRIVATE)
     }
+    val uiScope = rememberCoroutineScope()
     val store = remember(context) { MeasurementStore(context) }
     val projectStore = remember(context) { ProjectStore(context) }
     var projects by remember { mutableStateOf(projectStore.load()) }
@@ -88,6 +94,14 @@ private fun MeasureApp() {
     var scanStats by remember { mutableStateOf<CloudStats?>(null) }
     var savedRecords by remember { mutableStateOf(store.load()) }
     var showHistory by remember { mutableStateOf(false) }
+    var backupRestoreData by remember { mutableStateOf<ByteArray?>(null) }
+    var backupRestoreInfo by remember { mutableStateOf<BackupContents?>(null) }
+    var availableUpdate by remember { mutableStateOf<AppUpdate?>(null) }
+    var updateDismissed by remember { mutableStateOf(false) }
+    var updateChecking by remember { mutableStateOf(false) }
+    var updateDownloading by remember { mutableStateOf(false) }
+    var downloadedUpdate by remember { mutableStateOf<Pair<Int, File>?>(null) }
+    var updateStatus by remember { mutableStateOf<String?>(null) }
     var pendingMode by remember { mutableStateOf<ToolMode?>(null) }
     var showScanReset by remember { mutableStateOf(false) }
 
@@ -114,6 +128,10 @@ private fun MeasureApp() {
         "حرّك الهاتف لاكتشاف السطح، ثم انقر لتثبيت نقاط القياس.",
         "Move the phone to detect a plane, then tap to place measurement points."
     )) }
+    LaunchedEffect(Unit) {
+        // The application remains fully usable offline, even if the release endpoint is unavailable.
+        availableUpdate = try { AppUpdater.checkAvailable() } catch (_: Exception) { null }
+    }
 
     var pendingData by remember { mutableStateOf<ByteArray?>(null) }
     val exportLauncher = rememberLauncherForActivityResult(
@@ -130,6 +148,34 @@ private fun MeasureApp() {
             }
         }
         pendingData = null
+    }
+    val backupImporter = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val input = context.contentResolver.openInputStream(uri)
+                    ?: throw IllegalStateException("Unable to open selected file")
+                val bytes = input.use { stream ->
+                    val buffer = ByteArray(8192)
+                    val output = java.io.ByteArrayOutputStream()
+                    while (true) {
+                        val n = stream.read(buffer)
+                        if (n < 0) break
+                        require(output.size() + n <= 2_000_000) { "Backup file exceeds 2 MB" }
+                        output.write(buffer, 0, n)
+                    }
+                    output.toByteArray()
+                }
+                val info = ProjectBackup.inspect(bytes)
+                backupRestoreData = bytes
+                backupRestoreInfo = info
+                projectPicker = false
+            } catch (e: Exception) {
+                message = tr("تعذر قراءة النسخة الاحتياطية: ", "Cannot open backup: ") +
+                    (e.localizedMessage ?: "")
+            }
+        }
     }
     fun export(filename: String, bytes: ByteArray) {
         pendingData = bytes
@@ -335,11 +381,36 @@ private fun MeasureApp() {
                     Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                         Column {
                             Text("BIM Measure 3D", fontSize = 23.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                            Text("BIM SPECIALIST  •  v0.2 Beta", fontSize = 10.sp, color = paleBlue)
+                            Text("BIM SPECIALIST  •  ${BuildConfig.VERSION_NAME}", fontSize = 10.sp, color = paleBlue)
                         }
-                        OutlinedButton(onClick = { showHistory = true }, contentPadding = PaddingValues(horizontal = 10.dp)) {
-                            Text(tr("السجل (${savedRecords.count { it.projectId == projectId }})", "History (${savedRecords.count { it.projectId == projectId }})"), fontSize = 12.sp)
+                        Column {
+                            TextButton(
+                                enabled = !updateChecking,
+                                onClick = {
+                                    updateDismissed = false
+                                    updateChecking = true
+                                    uiScope.launch {
+                                        try {
+                                            availableUpdate = AppUpdater.checkAvailable()
+                                            if (availableUpdate == null) {
+                                                updateStatus = tr("لا يوجد تحديث جديد متاح.", "No newer signed release available.")
+                                            }
+                                        } catch (_: Exception) {
+                                            updateStatus = tr("تعذر فحص التحديثات. تأكد من الاتصال.", "Cannot check updates right now.")
+                                        } finally { updateChecking = false }
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 3.dp, vertical = 0.dp),
+                                modifier = Modifier.height(29.dp)
+                            ) { Text(if (availableUpdate == null) tr("التحديثات", "Updates") else tr("تحديث جديد", "New update"), fontSize = 11.sp) }
+                            OutlinedButton(onClick = { showHistory = true },
+                                contentPadding = PaddingValues(horizontal = 7.dp), modifier = Modifier.height(34.dp)) {
+                                Text(tr("السجل (${savedRecords.count { it.projectId == projectId }})", "History (${savedRecords.count { it.projectId == projectId }})"), fontSize = 11.sp)
+                            }
                         }
+                    }
+                    if (updateStatus != null) {
+                        Text(updateStatus!!, color = paleBlue, fontSize = 11.sp, maxLines = 2)
                     }
                     Spacer(Modifier.height(5.dp))
                     OutlinedButton(
@@ -587,6 +658,64 @@ private fun MeasureApp() {
             }
         }
 
+        if (availableUpdate != null && !updateDismissed) {
+            val update = availableUpdate!!
+            AlertDialog(
+                onDismissRequest = { if (!updateDownloading) updateDismissed = true },
+                title = { Text(tr("تحديث BIM Measure 3D", "BIM Measure 3D update")) },
+                text = {
+                    Column {
+                        Text(tr(
+                            "الإصدار الجديد: ${update.versionName}. يحتفظ Android بالمشاريع والقياسات عند التحديث بنفس شهادة التوقيع.",
+                            "New version: ${update.versionName}. Android preserves local projects when the signing certificate matches."
+                        ))
+                        Spacer(Modifier.height(6.dp))
+                        Text(tr(
+                            "يتحقق التطبيق من SHA-256 للملف. يطلب Android موافقتك قبل تثبيت التحديث.",
+                            "The APK is verified with SHA-256. Android will ask you to approve installation."
+                        ), fontSize = 12.sp, color = paleBlue)
+                        if (updateDownloading) CircularProgressIndicator(modifier = Modifier.padding(12.dp))
+                        if (updateStatus != null) Text(updateStatus!!, color = warningAmber, fontSize = 12.sp)
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        enabled = !updateDownloading,
+                        onClick = {
+                            updateDownloading = true
+                            uiScope.launch {
+                                try {
+                                    val cached = downloadedUpdate
+                                    val file = if (cached != null && cached.first == update.versionCode && cached.second.isFile) {
+                                        cached.second
+                                    } else {
+                                        AppUpdater.downloadVerified(context, update).also {
+                                            downloadedUpdate = update.versionCode to it
+                                        }
+                                    }
+                                    val activity = context as? Activity
+                                        ?: throw IllegalStateException("Activity unavailable")
+                                    val started = AppUpdater.requestInstall(activity, file)
+                                    updateStatus = if (started)
+                                        tr("وافق على تثبيت التحديث في شاشة Android.", "Confirm the update in Android installer.")
+                                    else
+                                        tr("فعّل السماح بالتثبيت من هذا التطبيق، ثم اضغط تثبيت مرة أخرى.",
+                                            "Allow installs from this app in Settings, then tap Install again.")
+                                } catch (e: Exception) {
+                                    updateStatus = tr("فشل تنزيل التحديث أو التحقق منه: ", "Update failed verification: ") +
+                                        (e.localizedMessage ?: "")
+                                } finally { updateDownloading = false }
+                            }
+                        }
+                    ) { Text(if (downloadedUpdate?.first == update.versionCode) tr("تثبيت", "Install") else tr("تنزيل وتثبيت", "Download & install")) }
+                },
+                dismissButton = {
+                    TextButton(enabled = !updateDownloading, onClick = { updateDismissed = true }) {
+                        Text(tr("لاحقًا", "Later"))
+                    }
+                }
+            )
+        }
         if (pendingProjectId != null) {
             AlertDialog(
                 onDismissRequest = { pendingProjectId = null },
@@ -608,6 +737,50 @@ private fun MeasureApp() {
                 },
                 dismissButton = {
                     TextButton(onClick = { pendingProjectId = null }) { Text(tr("إلغاء", "Cancel")) }
+                }
+            )
+        }
+        if (backupRestoreData != null && backupRestoreInfo != null) {
+            AlertDialog(
+                onDismissRequest = { backupRestoreData = null; backupRestoreInfo = null },
+                title = { Text(tr("تأكيد استعادة النسخة الاحتياطية", "Confirm backup restore")) },
+                text = {
+                    Text(
+                        tr("سيتم استبدال جميع مشاريع وقياسات الجهاز بالنسخة المختارة. ",
+                           "All locally saved projects and measurements will be REPLACED by this backup. ") +
+                        tr("المشاريع: ${backupRestoreInfo!!.projects}، القياسات: ${backupRestoreInfo!!.measurements}. ",
+                           "Projects: ${backupRestoreInfo!!.projects}, Measurements: ${backupRestoreInfo!!.measurements}. ") +
+                        tr("صدّر نسخة احتياطية من بياناتك الحالية قبل المتابعة.",
+                           "Export your current data before proceeding.")
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        try {
+                            val data = backupRestoreData!!
+                            ProjectBackup.restore(context, data)
+                            clearAnchors()
+                            resetScan()
+                            projects = projectStore.load()
+                            projectId = projectStore.selectedId()
+                            savedRecords = store.load()
+                            unit = DisplayUnit.entries.firstOrNull {
+                                it.name == prefs.getString("unit", DisplayUnit.METRE.name)
+                            } ?: DisplayUnit.METRE
+                            message = tr("تمت استعادة المشاريع والقياسات.", "Projects and measurements restored.")
+                        } catch (e: Exception) {
+                            message = tr("فشلت عملية الاستعادة: ", "Restore failed: ") +
+                                (e.localizedMessage ?: "")
+                        } finally {
+                            backupRestoreData = null
+                            backupRestoreInfo = null
+                        }
+                    }) { Text(tr("استعادة واستبدال", "Replace and restore"), color = warningAmber) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { backupRestoreData = null; backupRestoreInfo = null }) {
+                        Text(tr("إلغاء", "Cancel"))
+                    }
                 }
             )
         }
@@ -664,6 +837,24 @@ private fun MeasureApp() {
                                 projectError = e.localizedMessage ?: tr("اسم المشروع غير صالح", "Invalid project name")
                             }
                         }) { Text(tr("إنشاء مشروع", "Create project")) }
+                        HorizontalDivider()
+                        Text(
+                            tr("نسخ احتياطي محلي لجميع المشاريع والقياسات. احفظه في مكان آمن.",
+                               "Offline backup for all projects and measurements. Store it securely."),
+                            fontSize = 12.sp, color = paleBlue
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            TextButton(onClick = {
+                                try {
+                                    export("BIMMeasure3D-all-projects-backup.json", ProjectBackup.export(context))
+                                } catch (e: Exception) {
+                                    projectError = e.localizedMessage ?: "Backup failed"
+                                }
+                            }) { Text(tr("تصدير نسخة", "Export backup")) }
+                            TextButton(onClick = {
+                                backupImporter.launch(arrayOf("application/json", "application/octet-stream", "text/plain"))
+                            }) { Text(tr("استعادة نسخة", "Restore backup")) }
+                        }
                     }
                 },
                 confirmButton = { TextButton(onClick = { projectPicker = false }) { Text(tr("إغلاق", "Close")) } }
