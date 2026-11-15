@@ -65,10 +65,14 @@ private fun MeasureApp() {
     val arabic = remember { Locale.getDefault().language == "ar" }
     fun tr(ar: String, en: String) = if (arabic) ar else en
 
+    val prefs = remember(context) {
+        context.applicationContext.getSharedPreferences("bim_measure_display", android.content.Context.MODE_PRIVATE)
+    }
     val store = remember(context) { MeasurementStore(context) }
     val projectStore = remember(context) { ProjectStore(context) }
     var projects by remember { mutableStateOf(projectStore.load()) }
     var projectId by remember { mutableStateOf(projectStore.selectedId()) }
+    var pendingProjectId by remember { mutableStateOf<String?>(null) }
     var projectPicker by remember { mutableStateOf(false) }
     var projectInput by remember { mutableStateOf("") }
     var projectError by remember { mutableStateOf("") }
@@ -86,7 +90,12 @@ private fun MeasureApp() {
     var showScanReset by remember { mutableStateOf(false) }
 
     var mode by remember { mutableStateOf(ToolMode.LENGTH) }
-    var unit by remember { mutableStateOf(DisplayUnit.METRE) }
+    var unit by remember {
+        mutableStateOf(
+            DisplayUnit.entries.firstOrNull { it.name == prefs.getString("unit", DisplayUnit.METRE.name) }
+                ?: DisplayUnit.METRE
+        )
+    }
     val anchors = remember { mutableStateListOf<Anchor>() }
     val sampler = remember { PointSampler() }
     var scanning by remember { mutableStateOf(false) }
@@ -158,6 +167,7 @@ private fun MeasureApp() {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
                 scanning = false
+                isTracking = false
                 frameRef[0] = null
             }
         }
@@ -214,7 +224,8 @@ private fun MeasureApp() {
                     val now = System.nanoTime()
                     if (now - updateNanos[0] > 170_000_000L) {
                         updateNanos[0] = now
-                        isTracking = frame.camera.trackingState == TrackingState.TRACKING
+                        isTracking = frame.camera.trackingState == TrackingState.TRACKING &&
+                            anchors.all { it.trackingState == TrackingState.TRACKING }
                         if (anchors.isNotEmpty() && isTracking && viewWidth > 0 && viewHeight > 0) {
                             try {
                                 val view = FloatArray(16)
@@ -253,9 +264,10 @@ private fun MeasureApp() {
                     }
                 },
                 onTouchEvent = { event, _ ->
-                    if (event.actionMasked == MotionEvent.ACTION_UP && mode != ToolMode.SCAN && !showHistory && !projectPicker && !referenceDialog && pendingMode == null) {
+                    if (event.actionMasked == MotionEvent.ACTION_UP && mode != ToolMode.SCAN && !showHistory && !projectPicker && pendingProjectId == null && !referenceDialog && pendingMode == null) {
                         val hit = frameRef[0]?.hitTest(event)?.firstOrNull {
-                            it.trackable is Plane && (it.trackable as Plane).isPoseInPolygon(it.hitPose)
+                            it.trackable is Plane && it.trackable.trackingState == TrackingState.TRACKING &&
+                                (it.trackable as Plane).isPoseInPolygon(it.hitPose)
                         }
                         if (frameRef[0]?.camera?.trackingState != TrackingState.TRACKING) {
                             message = tr("تعذر تثبيت النقطة. انتظر استقرار التتبع.", "Tracking unstable. Try again when tracking is active.")
@@ -351,7 +363,7 @@ private fun MeasureApp() {
                             DisplayUnit.entries.forEach { option ->
                                 FilterChip(
                                     selected = unit == option,
-                                    onClick = { unit = option },
+                                    onClick = { unit = option; prefs.edit().putString("unit", option.name).apply() },
                                     label = { Text(option.label, fontSize = 11.sp) }
                                 )
                             }
@@ -413,7 +425,7 @@ private fun MeasureApp() {
                                     modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 3.dp)) {
                                     Text(tr("مسح", "Clear"), fontSize = 12.sp)
                                 }
-                                Button(onClick = { saveCurrent() }, enabled = measured != null,
+                                Button(onClick = { saveCurrent() }, enabled = measured != null && isTracking,
                                     modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 3.dp)) {
                                     Text(tr("حفظ", "Save"), fontSize = 12.sp)
                                 }
@@ -424,7 +436,7 @@ private fun MeasureApp() {
                                         if (mode == ToolMode.LENGTH) "length_mm.dxf" else "area_mm.dxf",
                                         Exports.dxf(vertices, mode == ToolMode.AREA)
                                     )
-                                }, enabled = measured != null, modifier = Modifier.weight(1f)) {
+                                }, enabled = measured != null && isTracking, modifier = Modifier.weight(1f)) {
                                     Text(tr("تصدير DXF", "DXF"), fontSize = 12.sp)
                                 }
                                 OutlinedButton(onClick = {
@@ -433,7 +445,7 @@ private fun MeasureApp() {
                                         Exports.measurementCsv(if (mode == ToolMode.LENGTH) "LENGTH" else "AREA",
                                             vertices, measured, perimeter)
                                     )
-                                }, enabled = measured != null, modifier = Modifier.weight(1f)) {
+                                }, enabled = measured != null && isTracking, modifier = Modifier.weight(1f)) {
                                     Text(tr("تصدير CSV", "CSV"), fontSize = 12.sp)
                                 }
                             }
@@ -442,7 +454,7 @@ private fun MeasureApp() {
                                     onClick = { referenceInput = ""; referenceError = ""; referenceDialog = true }
                                 ) { Text(tr("التحقق بمقياس مرجعي", "Check against tape-measure reference"), fontSize = 12.sp) }
                             }
-                            if (mode == ToolMode.AREA && measured != null) {
+                            if (mode == ToolMode.AREA && measured != null && isTracking) {
                                 Spacer(Modifier.height(4.dp))
                                 HorizontalDivider()
                                 Text(
@@ -573,6 +585,30 @@ private fun MeasureApp() {
             }
         }
 
+        if (pendingProjectId != null) {
+            AlertDialog(
+                onDismissRequest = { pendingProjectId = null },
+                title = { Text(tr("تغيير المشروع؟", "Change project?")) },
+                text = { Text(tr(
+                    "هناك قياسات أو نقاط مسح غير محفوظة. سيتم التخلص منها قبل الانتقال. القياسات المحفوظة لن تُحذف.",
+                    "There are unsaved measurement/scan points. Changing projects discards them. Saved measurements remain."
+                )) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        val destination = pendingProjectId!!
+                        pendingProjectId = null
+                        clearAnchors()
+                        resetScan()
+                        referenceResult = null
+                        projectStore.select(destination)
+                        projectId = destination
+                    }) { Text(tr("الانتقال", "Switch")) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingProjectId = null }) { Text(tr("إلغاء", "Cancel")) }
+                }
+            )
+        }
         if (solidPreview != null) {
             SolidPreviewDialog(mesh = solidPreview!!, arabic = arabic, onDismiss = { solidPreview = null })
         }
@@ -585,8 +621,12 @@ private fun MeasureApp() {
                         projects.forEach { project ->
                             TextButton(
                                 onClick = {
-                                    projectStore.select(project.id)
-                                    projectId = project.id
+                                    if (project.id != projectId && (anchors.isNotEmpty() || sampler.count() > 0)) {
+                                        pendingProjectId = project.id
+                                    } else {
+                                        projectStore.select(project.id)
+                                        projectId = project.id
+                                    }
                                     projectPicker = false
                                 },
                                 modifier = Modifier.fillMaxWidth()
@@ -608,6 +648,10 @@ private fun MeasureApp() {
                         if (projectError.isNotEmpty()) Text(projectError, color = warningAmber, fontSize = 12.sp)
                         TextButton(onClick = {
                             try {
+                                require(anchors.isEmpty() && sampler.count() == 0) {
+                                    if (arabic) "احفظ القياسات أو امسحها قبل إنشاء مشروع." else
+                                        "Save or clear the current measurement before creating a project."
+                                }
                                 val project = projectStore.create(projectInput)
                                 projects = projectStore.load()
                                 projectId = project.id
