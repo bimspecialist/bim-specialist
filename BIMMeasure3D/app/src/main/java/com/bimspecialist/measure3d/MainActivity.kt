@@ -12,7 +12,6 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -48,6 +47,7 @@ private fun MeasureApp() {
     var scanning by remember { mutableStateOf(false) }
     var scanCount by remember { mutableIntStateOf(0) }
     var frames by remember { mutableIntStateOf(0) }
+    val latestFrame = remember { arrayOfNulls<com.google.ar.core.Frame>(1) }
     var preview by remember { mutableStateOf<List<Vec3>?>(null) }
     var message by remember { mutableStateOf(label("حرّك الهاتف لتحديد الأسطح، ثم انقر على نقاط القياس.", "Scan a surface, then tap points to measure.")) }
     var pendingBytes by remember { mutableStateOf<ByteArray?>(null) }
@@ -87,10 +87,11 @@ private fun MeasureApp() {
             }else{
                 ARSceneView(
                     modifier=Modifier.fillMaxSize(),
-                    depthMode=Config.DepthMode.AUTOMATIC,
+                    depthMode=Config.DepthMode.DISABLED,
                     planeRenderer=mode!=Mode.SCAN,
                     onSessionFailed={e->message=label("خطأ في الواقع المعزز: ","AR error: ")+(e.localizedMessage ?: "")},
                     onSessionUpdated={_,frame->
+                        latestFrame[0] = frame
                         if(mode==Mode.SCAN&&scanning&&frame.camera.trackingState==TrackingState.TRACKING){
                             frames++
                             if(frames%12==0)try{
@@ -108,9 +109,10 @@ private fun MeasureApp() {
                             }catch(_:Exception){}
                         }
                     },
-                    onTouchEvent={event,hit->
+                    onTouchEvent={event,_->
                         if(event.actionMasked==MotionEvent.ACTION_UP&&mode!=Mode.SCAN){
-                            if(hit==null || hit.trackable !is Plane){
+                            val hit = latestFrame[0]?.hitTest(event)?.firstOrNull { it.trackable is Plane && (it.trackable as Plane).isPoseInPolygon(it.hitPose) }
+                            if(hit==null){
                                 message=label("لم يُكتشف سطح مناسب","No detected surface")
                             }else if((mode==Mode.LENGTH && anchors.size<2)||(mode==Mode.AREA && anchors.size<24)){
                                 try{
@@ -119,7 +121,7 @@ private fun MeasureApp() {
                                 }catch(e:Exception){message=e.localizedMessage ?: "AR error"}
                             }
                         }
-                        false
+                        mode!=Mode.SCAN && event.actionMasked==MotionEvent.ACTION_UP
                     }
                 )
             }
