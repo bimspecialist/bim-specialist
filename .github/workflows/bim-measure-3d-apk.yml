@@ -23,12 +23,12 @@ jobs:
           java-version: '21'
       - name: Android SDK
         uses: android-actions/setup-android@v4
-      - name: Android API 37
-        run: sdkmanager 'platforms;android-37' 'build-tools;36.0.0'
-      - name: Gradle 9.6
+      - name: Android API 36
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Gradle 8.13
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '9.6.0'
+          gradle-version: '8.13'
       - name: Assemble debug APK
         working-directory: BIMMeasure3D
         run: gradle --no-daemon --stacktrace :app:assembleDebug
