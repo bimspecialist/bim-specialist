@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -62,7 +63,8 @@ private val warningAmber = Color(0xFFFFD08B)
 @Composable
 private fun MeasureApp() {
     val context = LocalContext.current
-    val arabic = remember { Locale.getDefault().language == "ar" }
+    val currentLocale = LocalConfiguration.current.locales[0] ?: Locale.US
+    val arabic = currentLocale.language == "ar"
     fun tr(ar: String, en: String) = if (arabic) ar else en
 
     val prefs = remember(context) {
@@ -715,7 +717,7 @@ private fun MeasureApp() {
                             Spacer(Modifier.height(8.dp))
                             Text(
                                 (if (record.kind == "LENGTH") tr("الطول", "Length") else tr("المساحة", "Area")) +
-                                    "  •  " + SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(record.timestampMillis)),
+                                    "  •  " + SimpleDateFormat("yyyy-MM-dd HH:mm", currentLocale).format(Date(record.timestampMillis)),
                                 fontSize = 12.sp, color = paleBlue
                             )
                             Text(if (record.kind == "LENGTH") MeasureFormat.distance(record.valueMeters, unit)
