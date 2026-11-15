@@ -14,4 +14,4 @@ This build is a **debug APK**, signed using the standard Android debug key. Not 
 
 The app has no calibrated accuracy guarantee. Do not use for construction setting-out, safety, fabrication or precise surveys without independent verification.
 
-Android SDK 37, JDK 21, Gradle 9.6.0, AGP 9.4, Kotlin 2.4.10.
+Android SDK 36, JDK 21, Gradle 8.13, AGP 8.13.2, Kotlin 2.3.21, SceneView 4.18.0.
