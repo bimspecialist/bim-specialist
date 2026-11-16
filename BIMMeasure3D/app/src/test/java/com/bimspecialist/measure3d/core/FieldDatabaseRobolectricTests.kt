@@ -130,4 +130,45 @@ class FieldDatabaseRobolectricTests {
         assertEquals(updated, db.snapshot())
         assertEquals(updated.measurements, MeasurementStore(context).load())
     }
+    @Test fun sqliteVersionOneUpgradesWithoutDeletingMeasurements() {
+        val oldDb = context.openOrCreateDatabase(dbName, Context.MODE_PRIVATE, null)
+        oldDb.execSQL("""CREATE TABLE projects (
+            id TEXT PRIMARY KEY NOT NULL,
+            name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            created_at INTEGER NOT NULL
+        )""")
+        oldDb.execSQL("""CREATE TABLE measurements (
+            id TEXT PRIMARY KEY NOT NULL,
+            kind TEXT NOT NULL,
+            value_m REAL NOT NULL,
+            perimeter_m REAL,
+            points_json TEXT NOT NULL,
+            recorded_at INTEGER NOT NULL,
+            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT
+        )""")
+        oldDb.execSQL("CREATE TABLE settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)")
+        oldDb.execSQL("INSERT INTO projects(id,name,created_at) VALUES('general','General',0)")
+        oldDb.execSQL("INSERT INTO settings(key,value) VALUES('selectedProject','general')")
+        oldDb.execSQL("INSERT INTO settings(key,value) VALUES('unit','METRE')")
+        oldDb.execSQL("""INSERT INTO measurements(
+            id,kind,value_m,perimeter_m,points_json,recorded_at,project_id
+        ) VALUES('older-line','LENGTH',2.0,NULL,'[[0,0,0],[2,0,0]]',123,'general')""")
+        oldDb.version = 1
+        oldDb.close()
+
+        val newer = FieldDatabase.get(context)
+        val saved = newer.measurements()
+        assertEquals(1, saved.size)
+        assertEquals("older-line", saved[0].id)
+        assertEquals("ARCORE", saved[0].source)
+        val manuallyEntered = newer.addMeasurement(
+            "LENGTH", 1.0, null, demoPoints(), "general", source = "MANUAL"
+        )
+        assertEquals("MANUAL", manuallyEntered.source)
+        assertEquals(2, newer.measurements().size)
+        val restored = SnapshotCodec.decode(ProjectBackup.export(context))
+        assertEquals(1, restored.measurements.count { it.source == "MANUAL" })
+        assertEquals(1, restored.measurements.count { it.source == "ARCORE" })
+    }
+
 }

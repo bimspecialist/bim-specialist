@@ -19,8 +19,8 @@ android {
         applicationId = "com.bimspecialist.measure3d"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.6.1-beta"
+        versionCode = 8
+        versionName = "0.7.0-beta"
     }
     buildFeatures { compose = true; buildConfig = true }
     testOptions { unitTests.isIncludeAndroidResources = true }

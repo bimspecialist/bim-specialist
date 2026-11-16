@@ -53,9 +53,11 @@ object SnapshotCodec {
             val perimeter = if (m.isNull("perimeterMeters")) null else m.getDouble("perimeterMeters")
             val timestamp = m.getLong("timestampMillis")
             val projectId = m.optString("projectId", "general").ifBlank { "general" }
+            val source = m.optString("source", "ARCORE")
             val rawPoints = m.getJSONArray("points")
             require(id.length in 1..80 && measurementIds.add(id)) { "Invalid or duplicate record id" }
             require(kind == "LENGTH" || kind == "AREA") { "Unsupported measurement kind" }
+            require(source in setOf("ARCORE", "MANUAL")) { "Unsupported measurement source" }
             require(value.isFinite() && value >= 0.0) { "Invalid measurement" }
             require(perimeter == null || (perimeter.isFinite() && perimeter >= 0.0))
             require(timestamp >= 0 && projectId in ids) { "Invalid project association" }
@@ -71,7 +73,7 @@ object SnapshotCodec {
                     add(v)
                 }
             }
-            measurements.add(SavedMeasurement(id, kind, value, perimeter, points, timestamp, projectId))
+            measurements.add(SavedMeasurement(id, kind, value, perimeter, points, timestamp, projectId, source))
         }
         return FieldSnapshot(projects, selected, measurements, unit)
     }
@@ -93,6 +95,7 @@ object SnapshotCodec {
                 .put("perimeterMeters", m.perimeterMeters ?: JSONObject.NULL)
                 .put("timestampMillis", m.timestampMillis)
                 .put("projectId", m.projectId)
+                .put("source", m.source)
                 .put("points", points))
         }
         val root = JSONObject()

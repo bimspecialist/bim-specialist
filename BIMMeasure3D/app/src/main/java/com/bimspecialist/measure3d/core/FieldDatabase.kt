@@ -13,7 +13,7 @@ import java.util.UUID
  * Legacy SharedPreferences are read-only migration inputs and NEVER cleared.
  */
 class FieldDatabase private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "bim_measure_3d_records_v1.db", null, 1) {
+    SQLiteOpenHelper(context.applicationContext, "bim_measure_3d_records_v1.db", null, 2) {
 
     private val app = context.applicationContext
 
@@ -35,7 +35,8 @@ class FieldDatabase private constructor(context: Context) :
             perimeter_m REAL,
             points_json TEXT NOT NULL,
             recorded_at INTEGER NOT NULL,
-            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT
+            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+            source TEXT NOT NULL DEFAULT 'ARCORE'
         )""")
         db.execSQL("CREATE INDEX measurements_by_date ON measurements(recorded_at DESC)")
         db.execSQL("CREATE INDEX measurements_by_project ON measurements(project_id,recorded_at DESC)")
@@ -58,7 +59,12 @@ class FieldDatabase private constructor(context: Context) :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        throw IllegalStateException("No destructive schema migration is permitted")
+        // SQLiteOpenHelper executes onUpgrade inside a transaction; never drop user tables.
+        if (oldVersion == 1 && newVersion == 2) {
+            db.execSQL("ALTER TABLE measurements ADD COLUMN source TEXT NOT NULL DEFAULT 'ARCORE'")
+        } else {
+            throw IllegalStateException("Unsupported database upgrade from $oldVersion to $newVersion")
+        }
     }
 
     private fun setting(db: SQLiteDatabase, key: String, fallback: String): String {
@@ -100,6 +106,7 @@ class FieldDatabase private constructor(context: Context) :
     private fun putMeasurement(db: SQLiteDatabase, record: SavedMeasurement) {
         require(record.kind == "LENGTH" || record.kind == "AREA")
         require(record.points.size in (if (record.kind == "LENGTH") 2..2 else 3..64))
+        require(record.source in setOf("ARCORE", "MANUAL"))
         require(record.valueMeters.isFinite() && record.valueMeters >= 0)
         require(record.perimeterMeters == null || (record.perimeterMeters.isFinite() && record.perimeterMeters >= 0))
         db.insertOrThrow("measurements", null, ContentValues().apply {
@@ -111,6 +118,7 @@ class FieldDatabase private constructor(context: Context) :
             put("points_json", jsonPoints(record.points))
             put("recorded_at", record.timestampMillis)
             put("project_id", record.projectId)
+            put("source", record.source)
         })
     }
 
@@ -181,7 +189,7 @@ class FieldDatabase private constructor(context: Context) :
     @Synchronized fun measurements(): List<SavedMeasurement> {
         val result = ArrayList<SavedMeasurement>()
         readableDatabase.query("measurements",
-            arrayOf("id", "kind", "value_m", "perimeter_m", "points_json", "recorded_at", "project_id"),
+            arrayOf("id", "kind", "value_m", "perimeter_m", "points_json", "recorded_at", "project_id", "source"),
             null, null, null, null, "recorded_at DESC, id ASC").use { c ->
             while (c.moveToNext()) {
                 val pointsJson = JSONArray(c.getString(4))
@@ -202,16 +210,16 @@ class FieldDatabase private constructor(context: Context) :
                 require(value.isFinite() && value >= 0)
                 require(perimeter == null || (perimeter.isFinite() && perimeter >= 0))
                 result.add(SavedMeasurement(c.getString(0), kind, value, perimeter, points,
-                    c.getLong(5), c.getString(6)))
+                    c.getLong(5), c.getString(6), c.getString(7)))
             }
         }
         return result
     }
 
     @Synchronized fun addMeasurement(kind: String, value: Double, perimeter: Double?,
-        points: List<Vec3>, projectId: String): SavedMeasurement {
+        points: List<Vec3>, projectId: String, source: String = "ARCORE"): SavedMeasurement {
         val record = SavedMeasurement(UUID.randomUUID().toString(), kind, value, perimeter,
-            points.toList(), System.currentTimeMillis(), projectId)
+            points.toList(), System.currentTimeMillis(), projectId, source)
         val db = writableDatabase
         atomic(db) { putMeasurement(db, record) }
         return record

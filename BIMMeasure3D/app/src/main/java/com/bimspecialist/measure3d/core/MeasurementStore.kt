@@ -9,7 +9,8 @@ data class SavedMeasurement(
     val perimeterMeters: Double?,
     val points: List<Vec3>,
     val timestampMillis: Long,
-    val projectId: String = "general"
+    val projectId: String = "general",
+    val source: String = "ARCORE"
 )
 
 /** Compatibility façade: no read-modify-write of the entire measurement list. */
@@ -20,8 +21,8 @@ class MeasurementStore(context: Context) {
 
     fun add(
         kind: String, value: Double, perimeter: Double?,
-        points: List<Vec3>, projectId: String = "general"
-    ): SavedMeasurement = db.addMeasurement(kind, value, perimeter, points, projectId)
+        points: List<Vec3>, projectId: String = "general", source: String = "ARCORE"
+    ): SavedMeasurement = db.addMeasurement(kind, value, perimeter, points, projectId, source)
 
     fun delete(id: String) = db.deleteMeasurement(id)
 }

@@ -1,6 +1,20 @@
-# BIM Measure 3D · v0.6.1 Beta
+# BIM Measure 3D · v0.7.0 Beta
 
 Experimental Android engineering measurement and modeling app by BIM Specialist.
+
+## ARCore device compatibility and manual measurement (v0.7)
+
+The app now supports **AR Optional** mode and can open the home dashboard, project history, and an offline tape-measure entry tool even on a phone where Google Play Services for AR is unavailable.
+
+- A non-blocking Google ARCore availability check runs on application resume. Camera modes are gated until Google reports `SUPPORTED_INSTALLED`; unsupported and indeterminate devices get accurate guidance and a retry action.
+- Android camera permission is requested **only if the user launches a camera feature**. The offline measurement calculator needs no camera permission.
+- The manual tool supports length and rectangular area with entered metre/cm/mm measurements, including Arabic-Indic digits. It saves records to the current project's SQLite database with `source=MANUAL`. History marks the record as manual, never as a camera measurement. CSV exports include the manual source tag.
+- SQLite schema upgrades from version 1 to version 2 transactionally using `ALTER TABLE ... ADD COLUMN source TEXT NOT NULL DEFAULT 'ARCORE'` without dropping original records. Backup imports without a source attribute retain the legacy default `ARCORE`.
+- ARCore sessions that fail report an error rather than pretending a tracked measurement is valid. The app can still access saved records and manual input.
+
+**Important:** Manual input uses measurements typed from a physical tape. It does **not** make the phone camera measure distance without ARCore. GT 20 Pro hardware compatibility with ARCore must be confirmed on the actual device, independent of passing JVM tests.
+
+**Update caveat:** CI debug builds use temporary signing keys. They may not install as updates to already installed versions; do not uninstall an app holding important local data until it is backed up. Persistent release signing still requires the repository owner to configure a private keystore.
 
 ## GT 20 Pro responsive interface (v0.6.1 beta)
 
@@ -135,3 +149,5 @@ JDK 21, Gradle 8.13, Android SDK 36, Android Gradle Plugin 8.13.2, Kotlin 2.3.21
 - `0.6.0-beta`: new home dashboard, simplified camera controls, accessible navigation, collapsible advanced tools, export choices and minimal-screen state tests.
 
 - `0.6.1-beta`: runtime sizing and insets for GT 20 Pro class screens; landscape side panel, accessible tap targets, compact home cards and UI layout tests.
+
+- `0.7.0-beta`: AR Optional device checks, offline manual tape dimensions, record provenance and non-destructive SQLite schema migration.

@@ -1,5 +1,10 @@
 package com.bimspecialist.measure3d
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.Settings
 import android.os.Bundle
 import android.app.Activity
 import java.io.File
@@ -9,6 +14,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import android.view.MotionEvent
+import androidx.core.content.ContextCompat
+import com.google.ar.core.ArCoreApk
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -109,6 +116,38 @@ private fun MeasureApp() {
 
     var mode by rememberSaveable { mutableStateOf(ToolMode.LENGTH) }
     var showHome by rememberSaveable { mutableStateOf(true) }
+    var showManual by rememberSaveable { mutableStateOf(false) }
+    var manualSaving by remember { mutableStateOf(false) }
+    var manualLastSaved by remember { mutableStateOf<ManualMeasurement?>(null) }
+    var manualNotice by remember { mutableStateOf<String?>(null) }
+    var arCapability by remember { mutableStateOf(ArCapability.CHECKING) }
+    var arCheckRequest by remember { mutableIntStateOf(0) }
+    var showArHelp by remember { mutableStateOf(false) }
+    var permissionDenied by remember { mutableStateOf(false) }
+    var cameraPermissionGranted by remember {
+        mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED)
+    }
+    var pendingArMode by remember { mutableStateOf<ToolMode?>(null) }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        cameraPermissionGranted = granted
+        permissionDenied = !granted
+        if (!granted) pendingArMode = null
+    }
+    DisposableEffect(context, arCheckRequest) {
+        var active = true
+        arCapability = ArCapability.CHECKING
+        try {
+            ArCoreApk.getInstance().checkAvailabilityAsync(context.applicationContext) { availability ->
+                if (active) arCapability = ArCapabilityPolicy.fromGoogleAvailability(availability.name)
+            }
+        } catch (_: Exception) {
+            if (active) arCapability = ArCapability.UNKNOWN
+        }
+        onDispose { active = false }
+    }
     var showAdvanced by remember { mutableStateOf(false) }
     var showExportOptions by remember { mutableStateOf(false) }
     var pendingHome by remember { mutableStateOf(false) }
@@ -245,6 +284,12 @@ private fun MeasureApp() {
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                cameraPermissionGranted =
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                        PackageManager.PERMISSION_GRANTED
+                arCheckRequest++
+            }
             if (event == Lifecycle.Event.ON_STOP) {
                 scanning = false
                 isTracking = false
@@ -277,6 +322,32 @@ private fun MeasureApp() {
     val perimeter = if (mode == ToolMode.AREA && measured != null)
         Geometry.perimeter(vertices, closed = true) else null
 
+    fun saveManualMeasurement(result: ManualMeasurement) {
+        if (!storageReady || manualSaving || manualLastSaved == result) return
+        manualSaving = true
+        manualNotice = null
+        uiScope.launch {
+            try {
+                val updatedRecords = withContext(Dispatchers.IO) {
+                    store.add(
+                        result.kind, result.valueMetresOrSquareMetres,
+                        result.perimeterMetres, result.points, projectId, source = "MANUAL"
+                    )
+                    store.load()
+                }
+                savedRecords = updatedRecords
+                manualLastSaved = result
+                manualNotice = tr("تم حفظ القياس اليدوي في المشروع.",
+                    "Manual measurement saved to your project.")
+            } catch (e: Exception) {
+                manualNotice = tr("تعذر حفظ القياس: ", "Save failed: ") +
+                    (e.localizedMessage ?: "")
+            } finally {
+                manualSaving = false
+            }
+        }
+    }
+
     fun saveCurrent() {
         val value = measured ?: return
         if (!storageReady || !isTracking || !anchorsStable) return
@@ -298,11 +369,37 @@ private fun MeasureApp() {
         }
     }
 
-    BackHandler(enabled = !showHome) {
-        if (showAdvanced) showAdvanced = false else requestHome()
+    LaunchedEffect(cameraPermissionGranted, pendingArMode, arCapability) {
+        val selected = pendingArMode
+        if (cameraPermissionGranted && selected != null && arCapability == ArCapability.READY) {
+            pendingArMode = null
+            switchNow(selected)
+            showHome = false
+            showManual = false
+        }
+    }
+    BackHandler(enabled = !showHome || showManual) {
+        when {
+            showManual -> showManual = false
+            showAdvanced -> showAdvanced = false
+            else -> requestHome()
+        }
     }
     MaterialTheme(colorScheme = darkColorScheme(primary = brightBlue, background = deepNavy)) {
-        if (showHome) {
+        if (showManual) {
+            ManualMeasurementScreen(
+                arabic = arabic,
+                projectName = if (projectId == "general") tr("عام", "General")
+                    else projects.firstOrNull { it.id == projectId }?.name ?: "General",
+                storageReady = storageReady,
+                isSaving = manualSaving,
+                lastSaved = manualLastSaved,
+                notice = manualNotice,
+                onBack = { showManual = false },
+                onHistory = { showHistory = true },
+                onSave = { entry -> saveManualMeasurement(entry) }
+            )
+        } else if (showHome) {
             ModernHomeScreen(
                 arabic = arabic,
                 projectName = if (projectId == "general") tr("عام", "General")
@@ -311,10 +408,35 @@ private fun MeasureApp() {
                 storageReady = storageReady,
                 newUpdate = availableUpdate != null,
                 updateMessage = updateStatus,
+                arCapability = arCapability,
+                onRetryAr = { arCheckRequest++ },
+                onGetArServices = {
+                    val market = Intent(Intent.ACTION_VIEW, Uri.parse(
+                        "market://details?id=com.google.ar.core"
+                    ))
+                    try {
+                        context.startActivity(market)
+                    } catch (_: Exception) {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(
+                            "https://play.google.com/store/apps/details?id=com.google.ar.core"
+                        )))
+                    }
+                },
+                onManual = {
+                    manualNotice = null
+                    showManual = true
+                },
                 onStart = { selected ->
-                    switchNow(selected)
-                    showAdvanced = false
-                    showHome = false
+                    if (arCapability != ArCapability.READY) {
+                        showArHelp = true
+                    } else if (cameraPermissionGranted) {
+                        switchNow(selected)
+                        showAdvanced = false
+                        showHome = false
+                    } else {
+                        pendingArMode = selected
+                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                    }
                 },
                 onProjects = { if (storageReady) projectPicker = true },
                 onHistory = { showHistory = true },
@@ -351,7 +473,10 @@ private fun MeasureApp() {
                     frameRef[0] = null
                     overlay = emptyList()
                     scanning = false
-                    message = tr("تعذر تشغيل ARCore: ", "ARCore unavailable: ") + (e.localizedMessage ?: "")
+                    arCapability = ArCapability.SESSION_FAILED
+                    showArHelp = true
+                    message = tr("تعذر تشغيل ARCore: ", "ARCore unavailable: ") +
+                        (e.localizedMessage ?: "")
                 },
                 onSessionUpdated = { _, frame ->
                     frameRef[0] = frame
@@ -856,6 +981,67 @@ private fun MeasureApp() {
         }
         }
 
+        if (showArHelp) {
+            AlertDialog(
+                onDismissRequest = { showArHelp = false },
+                title = { Text(tr("حالة الواقع المعزز", "AR camera availability")) },
+                text = {
+                    Text(when (arCapability) {
+                        ArCapability.UNSUPPORTED -> tr(
+                            "هذا الهاتف لا يدعم ARCore حاليًا بحسب فحص Google. يمكنك استعمال القياس اليدوي وسجل المشاريع.",
+                            "ARCore is not supported on this device according to Google's check. Manual measurements and project records still work.")
+                        ArCapability.SERVICE_REQUIRED -> tr(
+                            "ثبّت أو حدّث Google Play Services for AR من المتجر ثم أعد الفحص.",
+                            "Install or update Google Play Services for AR, then run the check again.")
+                        ArCapability.SESSION_FAILED -> tr(
+                            "تعذر بدء جلسة الكاميرا. جرّب تحديث خدمة ARCore أو استخدم القياس اليدوي.",
+                            "The AR session could not start. Try updating ARCore or use manual measurements.")
+                        else -> tr(
+                            "لم نتمكن من تأكيد دعم الكاميرا الآن. أعد الفحص أو استخدم القياس اليدوي.",
+                            "AR availability has not been confirmed. Retry or use manual measurements.")
+                    })
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showArHelp = false
+                        arCheckRequest++
+                    }) { Text(tr("إعادة الفحص", "Retry")) }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showArHelp = false
+                        if (!showHome) requestHome()
+                        else showManual = true
+                    }) {
+                        Text(if (showHome) tr("قياس يدوي", "Manual mode")
+                            else tr("الرئيسية", "Home"))
+                    }
+                }
+            )
+        }
+        if (permissionDenied) {
+            AlertDialog(
+                onDismissRequest = { permissionDenied = false },
+                title = { Text(tr("صلاحية الكاميرا", "Camera permission")) },
+                text = { Text(tr(
+                    "يحتاج قياس AR إلى إذن الكاميرا. القياس اليدوي لا يحتاج إلى هذا الإذن.",
+                    "AR measurement requires camera access; manual measurement does not."
+                )) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        permissionDenied = false
+                        context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = Uri.parse("package:${context.packageName}")
+                        })
+                    }) { Text(tr("إعدادات التطبيق", "App settings")) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { permissionDenied = false }) {
+                        Text(tr("إغلاق", "Close"))
+                    }
+                }
+            )
+        }
         if (showExportOptions) {
             AlertDialog(
                 onDismissRequest = { showExportOptions = false },
@@ -1223,6 +1409,8 @@ private fun MeasureApp() {
                             Spacer(Modifier.height(8.dp))
                             Text(
                                 (if (record.kind == "LENGTH") tr("الطول", "Length") else tr("المساحة", "Area")) +
+                                    (if (record.source == "MANUAL") tr(" · إدخال يدوي", " · manual input")
+                                        else tr(" · ARCore", " · ARCore")) +
                                     "  •  " + SimpleDateFormat("yyyy-MM-dd HH:mm", currentLocale).format(Date(record.timestampMillis)),
                                 fontSize = 12.sp, color = paleBlue
                             )
@@ -1235,8 +1423,10 @@ private fun MeasureApp() {
                                 }) { Text("DXF") }
                                 TextButton(onClick = {
                                     export("measurement_${record.id.take(8)}.csv",
-                                        Exports.measurementCsv(record.kind, record.points,
-                                            record.valueMeters, record.perimeterMeters))
+                                        Exports.measurementCsv(
+                                            if (record.source == "MANUAL") "MANUAL_${record.kind}" else record.kind,
+                                            record.points, record.valueMeters, record.perimeterMeters
+                                        ))
                                 }) { Text("CSV") }
                                 TextButton(onClick = {
                                     uiScope.launch {

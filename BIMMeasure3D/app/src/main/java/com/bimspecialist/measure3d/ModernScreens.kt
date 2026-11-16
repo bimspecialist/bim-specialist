@@ -21,6 +21,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalDensity
+import com.bimspecialist.measure3d.core.ArCapability
 import com.bimspecialist.measure3d.core.DisplayUnit
 import com.bimspecialist.measure3d.core.MeasureFormat
 import java.util.Locale
@@ -40,6 +41,10 @@ internal fun ModernHomeScreen(
     storageReady: Boolean,
     newUpdate: Boolean,
     updateMessage: String?,
+    arCapability: ArCapability,
+    onRetryAr: () -> Unit,
+    onGetArServices: () -> Unit,
+    onManual: () -> Unit,
     onStart: (ToolMode) -> Unit,
     onProjects: () -> Unit,
     onHistory: () -> Unit,
@@ -109,8 +114,79 @@ internal fun ModernHomeScreen(
             }
         }
 
+        Surface(
+            color = if (arCapability == ArCapability.READY) Color(0xFF164538)
+                else Color(0xFF3C3141),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(11.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                val status = when (arCapability) {
+                    ArCapability.READY -> tr("الواقع المعزز جاهز", "AR camera is ready")
+                    ArCapability.CHECKING -> tr("جارٍ فحص توافق الواقع المعزز", "Checking AR support")
+                    ArCapability.SERVICE_REQUIRED -> tr("تحتاج خدمة Google Play للواقع المعزز",
+                        "Google Play Services for AR is required")
+                    ArCapability.UNSUPPORTED -> tr("الواقع المعزز غير مدعوم على هذا الجهاز",
+                        "This device does not support ARCore")
+                    ArCapability.SESSION_FAILED -> tr("تعذر تشغيل جلسة الواقع المعزز",
+                        "The AR camera session failed")
+                    ArCapability.UNKNOWN -> tr("تعذر التحقق من توافق الكاميرا",
+                        "Unable to check AR support")
+                }
+                Text(status, color = Color.White, fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold)
+                if (arCapability != ArCapability.READY) {
+                    Text(tr("يمكنك استخدام القياس اليدوي والمشاريع بدون ARCore.",
+                        "Manual measurements and project records are available without ARCore."),
+                        color = muted, fontSize = 12.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        TextButton(onClick = onRetryAr) {
+                            Text(tr("إعادة الفحص", "Retry check"), color = sky)
+                        }
+                        if (arCapability == ArCapability.SERVICE_REQUIRED) {
+                            TextButton(onClick = onGetArServices) {
+                                Text(tr("تثبيت الخدمة", "Install AR service"), color = sky)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Text(tr("ماذا تريد أن تقيس؟", "What would you like to measure?"),
             color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+
+        Surface(
+            onClick = onManual,
+            shape = RoundedCornerShape(18.dp),
+            color = Color(0xFF164A50),
+            border = BorderStroke(1.dp, Color(0xFF72D2BB).copy(alpha = 0.6f)),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 94.dp)
+        ) {
+            Row(
+                Modifier.padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    Modifier.size(52.dp).background(
+                        Color(0xFF245C60), RoundedCornerShape(13.dp)
+                    ), contentAlignment = Alignment.Center
+                ) {
+                    Text("cm", color = Color(0xFFBFF7E7),
+                        fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(tr("قياس يدوي بدون كاميرا", "Manual measurement"),
+                        color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text(tr("أدخل أبعاد شريط القياس واحفظها في المشروع",
+                        "Enter tape dimensions and save to your project"),
+                        color = Color(0xFFB5E9E0), fontSize = 12.sp, lineHeight = 17.sp)
+                }
+            }
+        }
 
         ModeCard(
             ToolMode.LENGTH,
