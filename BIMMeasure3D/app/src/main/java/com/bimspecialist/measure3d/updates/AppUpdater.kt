@@ -142,6 +142,26 @@ object AppUpdater {
         } finally { connection.disconnect() }
     }
 
+    /** Recheck any cached APK before launching the Android package installer. */
+    suspend fun verifyCached(file: File, info: AppUpdate): Boolean = withContext(Dispatchers.IO) {
+        if (!file.isFile || file.length() != info.fileSize || info.fileSize > MAX_APK_BYTES) {
+            return@withContext false
+        }
+        return@withContext try {
+            val digest = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buffer = ByteArray(65536)
+                while (true) {
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    digest.update(buffer, 0, n)
+                }
+            }
+            digest.digest().joinToString("") { "%02x".format(it) }
+                .equals(info.sha256, ignoreCase = true)
+        } catch (_: Exception) { false }
+    }
+
     /** Returns false if the user first needs to grant the app install permission in Settings. */
     fun requestInstall(activity: Activity, apk: File): Boolean {
         require(apk.isFile && apk.length() >= 100_000)

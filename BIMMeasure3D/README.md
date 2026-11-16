@@ -1,6 +1,16 @@
-# BIM Measure 3D · v0.4.0 Beta
+# BIM Measure 3D · v0.5.0 Beta
 
 Experimental Android engineering measurement and modeling app by BIM Specialist.
+
+## Reliability improvements in 0.5.0-beta
+
+- The app now writes measurement records to a **single SQLite database**. SQLite transactions keep project selection, units, measurements and backup restores consistent. The old preferences are only read once for a non-destructive migration and remain untouched as a safety fallback.
+- Corrupt legacy records fail closed without overwriting them with a new empty list. The UI reports a storage error and offers backup import/export when possible.
+- SQL/database reads, writes, archive import and export now run off the main UI thread.
+- The camera requires a short period of stable anchor tracking before saving or exporting measurements. This reduces preventable transient errors but **does not certify physical measurement accuracy**.
+- DXF adds explicit `AR raw (Y-up)` and `CAD Z-up` modes. Neither mode has real-world survey control coordinates.
+- The CI includes Robolectric database tests (legacy migration, corrupt records, rollback on injected write failure) in addition to pure geometry and security tests.
+- For failure modes and rollback criteria see [RELIABILITY_REVIEW.md](RELIABILITY_REVIEW.md).
 
 ## Upgrade without uninstalling
 
@@ -50,7 +60,7 @@ In **Area** mode, after selecting a valid polygon, specify **Extrusion height (m
 - Device camera intrinsics, lighting, motion, ARCore drift and surface detection limit reliability.
 - No direct STL mesh from point cloud; no automatically generated Revit walls/families or IFC.
 - This version is limited to supported Android ARCore devices. Runtime camera permission is necessary.
-- Projects and measurement history are local in Android SharedPreferences (100 most recent records). Point-cloud data are stored in memory until the user exports them; they are not retained when the process is terminated.
+- Projects and measurement history are stored in an on-device SQLite database. Legacy SharedPreferences are left untouched after migration. Point-cloud data stay in memory until exported and are not retained after process termination.
 - No app backend or account; the app's own code does not upload measurement data. Android/Google AR services may have their own service behavior.
 - If upgrading from a previously installed CI **debug APK**, the signatures are different from the new long-lived release. Android may require one final clean installation after you have exported important data. After that, keep the fixed signing key and install newer signed versions without uninstalling.
 - Imported STL/OBJ models may require cleanup and independently verified units for production fabrication.
@@ -61,7 +71,7 @@ The fixed-key signing workflow is separate: `.github/workflows/bim-measure-3d-re
 Release jobs are gated by an explicit `[signed-release]` commit marker or manual workflow dispatch. They fail safely if signing secrets are missing; they do not auto-generate another signing key. Production release artifacts are uploaded under a dedicated `bim-measure-3d-v...` tag to avoid changing unrelated product releases.
 
 
-GitHub Actions workflow: `.github/workflows/bim-measure-3d-apk.yml`.
+GitHub Actions workflow: `.github/workflows/bim-measure-3d-apk.yml` (also checks `bim-measure-3d-reliability-fixes`).
 On `bim-measure-3d-android-build` it runs:
 1. Android 36 + Java 21 + Gradle 8.13 installation.
 2. All JVM unit tests: geometry, winding, manifold edges, STL, OBJ, DXF, CSV, point-sampling, projection and reference error.
@@ -91,3 +101,4 @@ JDK 21, Gradle 8.13, Android SDK 36, Android Gradle Plugin 8.13.2, Kotlin 2.3.21
 - `0.2.0-beta`: overlays, area perimeter, units, local history, CSV, XYZ and tests
 - `0.3.0-beta`: named local projects, tape-reference error comparison, real watertight extrusion STL/OBJ from area, interactive solid preview, cloud bounding dimensions, adaptive icon, lifecycle cleanup, extra tests and lint
 - `0.4.0-beta`: persistent release-signing workflow (requires owner secrets), in-app version checks and verified package installation with Android user consent, full JSON backup/restore, update validation tests and clearer CI debug labeling.
+- `0.5.0-beta`: SQLite transactional persistence, legacy migration, IO dispatch, AR anchor stability, explicit CAD axes and simulated database fault tests.

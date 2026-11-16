@@ -292,6 +292,12 @@ private fun MeasureApp() {
                 depthMode = Config.DepthMode.DISABLED,
                 planeRenderer = mode != ToolMode.SCAN,
                 onSessionFailed = { e ->
+                    isTracking = false
+                    anchorsStable = false
+                    stability.reset()
+                    frameRef[0] = null
+                    overlay = emptyList()
+                    scanning = false
                     message = tr("تعذر تشغيل ARCore: ", "ARCore unavailable: ") + (e.localizedMessage ?: "")
                 },
                 onSessionUpdated = { _, frame ->
@@ -750,7 +756,8 @@ private fun MeasureApp() {
                             uiScope.launch {
                                 try {
                                     val cached = downloadedUpdate
-                                    val file = if (cached != null && cached.first == update.versionCode && cached.second.isFile) {
+                                    val file = if (cached != null && cached.first == update.versionCode &&
+                                        AppUpdater.verifyCached(cached.second, update)) {
                                         cached.second
                                     } else {
                                         AppUpdater.downloadVerified(context, update).also {
