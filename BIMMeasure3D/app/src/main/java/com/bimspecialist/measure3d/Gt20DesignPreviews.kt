@@ -31,6 +31,8 @@ private fun Gt20ArabicHomePreview() {
             storageReady = true,
             newUpdate = false,
             updateMessage = null,
+            arCapability = com.bimspecialist.measure3d.core.ArCapability.READY,
+            onRetryAr = {}, onGetArServices = {}, onManual = {},
             onStart = {}, onProjects = {}, onHistory = {}, onUpdates = {}
         )
     }
