@@ -55,6 +55,7 @@ import com.google.ar.core.Anchor
 import com.google.ar.core.Config
 import com.google.ar.core.Frame
 import com.google.ar.core.Plane
+import com.google.ar.core.Point
 import com.google.ar.core.TrackingState
 import io.github.sceneview.ar.ARSceneView
 import java.text.SimpleDateFormat
@@ -159,6 +160,7 @@ private fun MeasureApp() {
     var scanCount by remember { mutableIntStateOf(0) }
     var preview by remember { mutableStateOf<List<Vec3>?>(null) }
     val frameRef = remember { arrayOfNulls<Frame>(1) }
+    var pendingPlacement by remember { mutableStateOf<ScreenPoint?>(null) }
     val updateNanos = remember { longArrayOf(0L) }
     val frameCounter = remember { intArrayOf(0) }
     var viewWidth by remember { mutableIntStateOf(0) }
@@ -241,6 +243,7 @@ private fun MeasureApp() {
         exportLauncher.launch(filename)
     }
     fun clearAnchors() {
+        pendingPlacement = null
         anchors.forEach { it.detach() }
         anchors.clear()
         stability.reset()
@@ -291,6 +294,7 @@ private fun MeasureApp() {
                 arCheckRequest++
             }
             if (event == Lifecycle.Event.ON_STOP) {
+                pendingPlacement = null
                 scanning = false
                 isTracking = false
                 anchorsStable = false
@@ -346,6 +350,26 @@ private fun MeasureApp() {
                 manualSaving = false
             }
         }
+    }
+
+    fun requestPlacement(xFraction: Float, yFraction: Float) {
+        if (mode == ToolMode.SCAN || pendingPlacement != null) return
+        if (!xFraction.isFinite() || !yFraction.isFinite() ||
+            xFraction !in 0f..1f || yFraction !in 0f..1f) return
+        if (!PointPlacementPolicy.canPlace(mode, anchors.size, isTracking)) {
+            message = if (anchors.size >= PointPlacementPolicy.maximumPoints(mode))
+                tr("اكتملت نقاط القياس، احفظ النتيجة أو اضغط إعادة.",
+                    "All points placed. Save or reset to measure again.")
+            else tr("الكاميرا تبحث عن سطح مناسب. حرّك الهاتف ببطء.",
+                "Camera tracking is not ready. Move your phone slowly.")
+            return
+        }
+        if (viewWidth <= 0 || viewHeight <= 0) {
+            message = tr("لم تصبح معاينة الكاميرا جاهزة بعد.", "The camera preview is not ready.")
+            return
+        }
+        pendingPlacement = ScreenPoint(xFraction, yFraction)
+        message = tr("جارٍ تثبيت النقطة على السطح...", "Placing point on a detected surface...")
     }
 
     fun saveCurrent() {
@@ -480,6 +504,94 @@ private fun MeasureApp() {
                 },
                 onSessionUpdated = { _, frame ->
                     frameRef[0] = frame
+                    val target = pendingPlacement
+                    if (target != null) {
+                        pendingPlacement = null
+                        try {
+                            if (mode == ToolMode.SCAN ||
+                                anchors.size >= PointPlacementPolicy.maximumPoints(mode)) {
+                                message = tr("اكتملت نقاط القياس.", "Measurement points are complete.")
+                            } else if (frame.camera.trackingState != TrackingState.TRACKING ||
+                                anchors.any { it.trackingState != TrackingState.TRACKING }) {
+                                message = tr("التتبع غير مستقر. حرّك الهاتف ببطء ثم حاول مجددًا.",
+                                    "Tracking is unstable. Move slowly and try again.")
+                            } else {
+                                val hits = frame.hitTest(
+                                    target.x * viewWidth.toFloat(),
+                                    target.y * viewHeight.toFloat()
+                                )
+                                val hitOnPlane = hits.firstOrNull { candidate ->
+                                    val plane = candidate.trackable as? Plane
+                                    plane != null && PointPlacementPolicy.isAcceptableHit(
+                                        "PLANE", plane.trackingState == TrackingState.TRACKING,
+                                        insidePlane = plane.isPoseInPolygon(candidate.hitPose)
+                                    )
+                                }
+                                val featureFallback = if (mode == ToolMode.LENGTH && hitOnPlane == null) {
+                                    hits.firstOrNull { candidate ->
+                                        val point = candidate.trackable as? Point
+                                        point != null && PointPlacementPolicy.isAcceptableHit(
+                                            "FEATURE", point.trackingState == TrackingState.TRACKING,
+                                            estimatedNormal = point.orientationMode ==
+                                                Point.OrientationMode.ESTIMATED_SURFACE_NORMAL
+                                        )
+                                    }
+                                } else null
+                                val hit = hitOnPlane ?: featureFallback
+                                if (hit == null) {
+                                    message = tr(
+                                        "لم يتم العثور على نقطة ثابتة. وجّه علامة + إلى أرضية أو جدار واضح وأعد المحاولة.",
+                                        "No stable surface point found. Aim the + mark at a textured floor or wall and retry."
+                                    )
+                                } else {
+                                    val h = hit.hitPose.translation
+                                    val position = Vec3(
+                                        h[0].toDouble(), h[1].toDouble(), h[2].toDouble()
+                                    )
+                                    val cam = frame.camera.pose.translation
+                                    val eye = Vec3(
+                                        cam[0].toDouble(), cam[1].toDouble(), cam[2].toDouble()
+                                    )
+                                    val depth = position.distanceTo(eye)
+                                    val tooCloseToPrevious = anchors.lastOrNull()?.let { previous ->
+                                        val t = previous.pose.translation
+                                        position.distanceTo(Vec3(
+                                            t[0].toDouble(), t[1].toDouble(), t[2].toDouble()
+                                        )) < 0.005
+                                    } ?: false
+                                    when {
+                                        !depth.isFinite() || depth !in 0.1..8.0 ->
+                                            message = tr("اختر سطحًا يبعد بين 10 سم و8 أمتار.",
+                                                "Aim at a surface 0.1 to 8 metres away.")
+                                        tooCloseToPrevious ->
+                                            message = tr("نقطة النهاية قريبة جدًا من البداية. وجّه العلامة إلى موضع آخر.",
+                                                "The next point is too close. Aim at another location.")
+                                        else -> {
+                                            anchors.add(hit.createAnchor())
+                                            stability.reset()
+                                            anchorsStable = false
+                                            referenceResult = null
+                                            overlay = emptyList()
+                                            val index = anchors.size
+                                            message = when {
+                                                mode == ToolMode.LENGTH && index == 1 ->
+                                                    tr("ثُبّتت نقطة البداية. وجّه علامة + إلى النهاية واضغط تثبيت نقطة النهاية.",
+                                                        "Start point placed. Aim + at the end and press Place end point.")
+                                                mode == ToolMode.LENGTH && index == 2 ->
+                                                    tr("ثُبّتت النقطتان. انتظر الاستقرار ثم اضغط حفظ القياس.",
+                                                        "Both points placed. Wait for stable tracking, then save.")
+                                                else -> tr("تم تثبيت النقطة $index.",
+                                                    "Point $index placed.")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            message = tr("تعذر تثبيت النقطة: ", "Could not place point: ") +
+                                (e.localizedMessage ?: "ARCore")
+                        }
+                    }
                     val now = System.nanoTime()
                     if (now - updateNanos[0] > 170_000_000L) {
                         updateNanos[0] = now
@@ -528,36 +640,20 @@ private fun MeasureApp() {
                     }
                 },
                 onTouchEvent = { event, _ ->
-                    if (event.actionMasked == MotionEvent.ACTION_UP && mode != ToolMode.SCAN && !showHistory && !projectPicker && pendingProjectId == null && !referenceDialog && pendingMode == null && backupRestoreInfo == null && solidPreview == null && !showScanReset && !(availableUpdate != null && !updateDismissed) && !showExportOptions && !pendingHome) {
-                        val hit = frameRef[0]?.hitTest(event)?.firstOrNull {
-                            it.trackable is Plane && it.trackable.trackingState == TrackingState.TRACKING &&
-                                (it.trackable as Plane).isPoseInPolygon(it.hitPose)
-                        }
-                        if (frameRef[0]?.camera?.trackingState != TrackingState.TRACKING) {
-                            message = tr("تعذر تثبيت النقطة. انتظر استقرار التتبع.", "Tracking unstable. Try again when tracking is active.")
-                        } else if (hit == null) {
-                            message = tr("لم يتم العثور على سطح. حرّك الكاميرا ببطء.", "No detected plane. Move the camera slowly.")
-                        } else if ((mode == ToolMode.LENGTH && anchors.size < 2) ||
-                            (mode == ToolMode.AREA && anchors.size < 24)) {
-                            try {
-                                val distance = hit.hitPose.translation.let { h ->
-                                    val t = frameRef[0]!!.camera.pose.translation
-                                    Vec3(h[0].toDouble(), h[1].toDouble(), h[2].toDouble())
-                                        .distanceTo(Vec3(t[0].toDouble(), t[1].toDouble(), t[2].toDouble()))
-                                }
-                                if (distance > 8.0 || distance < 0.1) {
-                                    message = tr("اختر سطحًا يبعد بين 10 سم و8 أمتار.", "Select a surface between 0.1 and 8 metres away.")
-                                } else {
-                                    anchors.add(hit.createAnchor())
-                                    stability.reset()
-                                    anchorsStable = false
-                                    referenceResult = null
-                                    message = tr("أضيفت النقطة ${anchors.size}.", "Point ${anchors.size} added.")
-                                }
-                            } catch (e: Exception) {
-                                message = e.localizedMessage ?: "AR error"
-                            }
-                        }
+                    // Direct image taps remain supported. The large Place point button
+                    // is the primary workflow and does not depend on scene touch dispatch.
+                    if (event.actionMasked == MotionEvent.ACTION_UP &&
+                        mode != ToolMode.SCAN && viewWidth > 0 && viewHeight > 0 &&
+                        !showHistory && !projectPicker && pendingProjectId == null &&
+                        !referenceDialog && pendingMode == null &&
+                        backupRestoreInfo == null && solidPreview == null &&
+                        !showScanReset && !(availableUpdate != null && !updateDismissed) &&
+                        !showExportOptions && !pendingHome && !showArHelp && !permissionDenied
+                    ) {
+                        requestPlacement(
+                            (event.x / viewWidth.toFloat()).coerceIn(0f, 1f),
+                            (event.y / viewHeight.toFloat()).coerceIn(0f, 1f)
+                        )
                     }
                     mode != ToolMode.SCAN && event.actionMasked == MotionEvent.ACTION_UP
                 }
@@ -929,6 +1025,9 @@ private fun MeasureApp() {
                     onHome = { requestHome() },
                     onMore = { showAdvanced = true },
                     onHistory = { showHistory = true },
+                    onPlacePoint = { xFraction, yFraction ->
+                        requestPlacement(xFraction, yFraction)
+                    },
                     onUndo = {
                         if (anchors.isNotEmpty()) {
                             referenceResult = null

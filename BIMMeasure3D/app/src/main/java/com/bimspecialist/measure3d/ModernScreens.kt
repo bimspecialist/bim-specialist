@@ -355,6 +355,7 @@ internal fun ModernCameraOverlay(
     onHome: () -> Unit,
     onMore: () -> Unit,
     onHistory: () -> Unit,
+    onPlacePoint: (Float, Float) -> Unit,
     onUndo: () -> Unit,
     onClear: () -> Unit,
     onSave: () -> Unit,
@@ -380,21 +381,35 @@ internal fun ModernCameraOverlay(
         val profile = ResponsiveUiPolicy.forBounds(
             maxWidth.value.toInt(), maxHeight.value.toInt(), LocalDensity.current.fontScale
         )
-        if (mode != ToolMode.SCAN && pointCount == 0) {
-            Canvas(Modifier.align(Alignment.Center).size(54.dp)) {
-                val cx = size.width * 0.5f
-                val cy = size.height * 0.5f
-                val length = size.width * 0.17f
-                val gap = size.width * 0.075f
-                val lineColor = Color.White.copy(alpha = if (isTracking) 0.8f else 0.35f)
-                drawLine(lineColor, Offset(cx - length - gap, cy),
-                    Offset(cx - gap, cy), strokeWidth = 2.dp.toPx())
-                drawLine(lineColor, Offset(cx + gap, cy),
-                    Offset(cx + length + gap, cy), strokeWidth = 2.dp.toPx())
-                drawLine(lineColor, Offset(cx, cy - length - gap),
-                    Offset(cx, cy - gap), strokeWidth = 2.dp.toPx())
-                drawLine(lineColor, Offset(cx, cy + gap),
-                    Offset(cx, cy + length + gap), strokeWidth = 2.dp.toPx())
+        // Always show the aiming mark while choosing a new point. On a landscape
+        // phone it is centred in the camera area, not behind the right-side panel.
+        val aimX = PointPlacementPolicy.targetXFraction(
+            maxWidth.value, maxHeight.value, profile.sidePanelWidthDp
+        )
+        if (mode != ToolMode.SCAN && PointPlacementPolicy.nextPointIndex(mode, pointCount) != null) {
+            Box(
+                Modifier.align(Alignment.CenterStart)
+                    .width((maxWidth.value * if (profile.landscape) aimX * 2f else 1f).dp)
+                    .fillMaxHeight()
+            ) {
+                Canvas(Modifier.align(Alignment.Center).size(60.dp)) {
+                    val cx = size.width * 0.5f
+                    val cy = size.height * 0.5f
+                    val length = size.width * 0.18f
+                    val gap = size.width * 0.08f
+                    val lineColor = if (isTracking) Color(0xFF82F3D8)
+                        else Color.White.copy(alpha = 0.45f)
+                    drawLine(lineColor, Offset(cx - length - gap, cy),
+                        Offset(cx - gap, cy), strokeWidth = 2.5.dp.toPx())
+                    drawLine(lineColor, Offset(cx + gap, cy),
+                        Offset(cx + length + gap, cy), strokeWidth = 2.5.dp.toPx())
+                    drawLine(lineColor, Offset(cx, cy - length - gap),
+                        Offset(cx, cy - gap), strokeWidth = 2.5.dp.toPx())
+                    drawLine(lineColor, Offset(cx, cy + gap),
+                        Offset(cx, cy + length + gap), strokeWidth = 2.5.dp.toPx())
+                    drawCircle(lineColor.copy(alpha = 0.75f),
+                        radius = 2.dp.toPx(), center = Offset(cx, cy))
+                }
             }
         }
         Row(
@@ -491,7 +506,9 @@ internal fun ModernCameraOverlay(
 
             val mainValue = when (mode) {
                 ToolMode.LENGTH -> measured?.let { MeasureFormat.distance(it, unit) }
-                    ?: tr("حدد نقطتين على الصورة", "Tap two points on the camera")
+                    ?: if (pointCount == 0)
+                        tr("حدد نقطة البداية", "Set the start point")
+                    else tr("حدد نقطة النهاية", "Set the end point")
                 ToolMode.AREA -> measured?.let { MeasureFormat.area(it, unit) }
                     ?: tr("حدد زوايا المساحة", "Tap the area corners")
                 ToolMode.SCAN -> tr("$scanCount نقطة", "$scanCount captured points")
@@ -509,8 +526,10 @@ internal fun ModernCameraOverlay(
                         "حرّك الجوال ببطء حول الجسم. النتيجة سحابة نقاط تجريبية.",
                         "Move slowly around the object. Sparse point cloud only.")
                     measured == null -> if (mode == ToolMode.LENGTH)
-                        tr("اضغط على بداية ونهاية المسافة داخل الصورة.", "Tap the start and end points on the image.")
-                    else tr("اضغط على زوايا الشكل بالترتيب.", "Tap the corners in order.")
+                        tr("وجّه علامة + إلى الهدف واضغط زر تثبيت النقطة.",
+                            "Aim the + mark and press the place point button.")
+                    else tr("وجّه علامة + إلى كل زاوية ثم اضغط تثبيت النقطة.",
+                        "Aim the + mark at each corner and press Place point.")
                     else -> tr("تحقق من النتيجة قبل حفظها.", "Verify the result before saving.")
                 },
                 color = muted, fontSize = 11.sp, maxLines = 2,
@@ -542,6 +561,29 @@ internal fun ModernCameraOverlay(
                     }
                 }
             } else {
+                val nextIndex = PointPlacementPolicy.nextPointIndex(mode, pointCount)
+                if (nextIndex != null) {
+                    Button(
+                        onClick = { onPlacePoint(aimX, 0.5f) },
+                        enabled = PointPlacementPolicy.canPlace(mode, pointCount, isTracking),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF82E9C7)),
+                        shape = RoundedCornerShape(15.dp)
+                    ) {
+                        Text(
+                            if (mode == ToolMode.LENGTH) {
+                                if (nextIndex == 1)
+                                    tr("تثبيت نقطة البداية", "Place start point")
+                                else tr("تثبيت نقطة النهاية", "Place end point")
+                            } else tr("تثبيت النقطة $nextIndex", "Place point $nextIndex"),
+                            color = navy, fontWeight = FontWeight.Bold, fontSize = 16.sp
+                        )
+                    }
+                } else if (mode == ToolMode.LENGTH) {
+                    Text(tr("تم تحديد نقطتي القياس. انتظر استقرار التتبع ثم احفظ.",
+                        "Both points placed. Wait for stable tracking, then save."),
+                        color = Color(0xFF82E9C7), fontSize = 12.sp)
+                }
                 Button(
                     onClick = onSave, enabled = ready,
                     modifier = Modifier.fillMaxWidth().height(profile.primaryButtonHeightDp.dp),
@@ -561,9 +603,13 @@ internal fun ModernCameraOverlay(
                         contentPadding = PaddingValues(horizontal = 2.dp)) { Text(tr("تصدير", "Export"), fontSize = 13.sp) }
                 }
             }
-            if (statusMessage.isNotBlank() && (statusMessage.contains("failed", true) ||
-                        statusMessage.contains("تعذر") || statusMessage.contains("فشل"))) {
-                Text(statusMessage, color = Color(0xFFFFD48F), fontSize = 11.sp, maxLines = 2)
+            if (statusMessage.isNotBlank()) {
+                val warn = listOf("failed", "تعذر", "فشل", "لم يتم", "not found",
+                    "unstable", "invalid", "غير", "no detected", "اختر سطح").any {
+                    statusMessage.contains(it, ignoreCase = true)
+                }
+                Text(statusMessage, color = if (warn) Color(0xFFFFD48F) else sky,
+                    fontSize = 11.sp, maxLines = 2)
             }
         }
     }

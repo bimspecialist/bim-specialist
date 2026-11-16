@@ -7,6 +7,7 @@ on:
       - bim-measure-3d-ui-redesign
       - bim-measure-3d-infinix-gt20-ui
       - bim-measure-3d-v0.7-device-resilience
+      - bim-measure-3d-v0.7.1-point-placement
     paths:
       - 'BIMMeasure3D/**'
       - '.github/workflows/bim-measure-3d-apk.yml'
@@ -40,7 +41,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: BIMMeasure3D-v0.7-compatibility-tests
+          name: BIMMeasure3D-v0.7.1-point-tests
           path: BIMMeasure3D/app/build/test-results/testDebugUnitTest/
           if-no-files-found: ignore
       - name: Verify APK package and debug signature
@@ -54,7 +55,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BIMMeasure3D-v0.7-CI-DEBUG-NOT-FOR-UPDATES
+          name: BIMMeasure3D-v0.7.1-CI-DEBUG-NOT-FOR-UPDATES
           path: BIMMeasure3D/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 90

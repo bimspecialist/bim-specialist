@@ -1,6 +1,22 @@
-# BIM Measure 3D · v0.7.0 Beta
+# BIM Measure 3D · v0.7.1 Beta
 
 Experimental Android engineering measurement and modeling app by BIM Specialist.
+
+## Two-point camera measurement on the phone (v0.7.1)
+
+**Length mode** on the Infinix GT 20 Pro-class screen now has a clear, high-contrast **Place start point / Place end point** button and a persistent aim crosshair. This resolves the old usability issue where tapping the camera image was the only way to place an anchor.
+
+1. Select **Measure length** from the dashboard. The ARCore compatibility check must report READY.
+2. Slowly aim the **+** crosshair at a well-textured floor or wall and wait for AR TRACKING.
+3. Tap **Place start point**. A start marker appears and the screen instructs you to place the end point.
+4. Move slowly to the next location; aim **+** at it and tap **Place end point**.
+5. Wait briefly for anchors to stabilize, read the length, and tap **Save measurement**. Undo and Reset remain available.
+
+Both buttons and old direct-image taps use the **same request queue**, executed on the next live ARCore frame, rather than a possibly stale frame from a UI click. Hit tests use `Frame.hitTest(float,float)` in the camera viewport. Tracked plane intersections within polygon bounds are preferred; length mode can fall back to well-oriented tracked AR feature points when a stable plane cannot be found. Feature-point results remain approximate and should be checked with a physical reference.
+
+The center crosshair also stays visible when the first point is set. In landscape it stays in the visible camera region, away from the side controls. The screen reports why placement was rejected, including tracking loss, no suitable hit, invalid distance, or duplicate points. It prevents placing a third length point.
+
+**Limitations:** A static plane detection or feature-point hit must exist for this workflow. This is not camera-only tape-measure functionality without ARCore. Real distance accuracy and touch ergonomics are **UNVERIFIED** until tested on the user's Infinix GT 20 Pro. APKs produced by CI are still ephemeral-debug signed and may not upgrade an existing installation; back up project data before attempting any change.
 
 ## ARCore device compatibility and manual measurement (v0.7)
 
@@ -151,3 +167,5 @@ JDK 21, Gradle 8.13, Android SDK 36, Android Gradle Plugin 8.13.2, Kotlin 2.3.21
 - `0.6.1-beta`: runtime sizing and insets for GT 20 Pro class screens; landscape side panel, accessible tap targets, compact home cards and UI layout tests.
 
 - `0.7.0-beta`: AR Optional device checks, offline manual tape dimensions, record provenance and non-destructive SQLite schema migration.
+
+- `0.7.1-beta`: aim crosshair, button-based start/end point placement on current ARCore frames, tracked feature-point fallback for length and new placement tests.

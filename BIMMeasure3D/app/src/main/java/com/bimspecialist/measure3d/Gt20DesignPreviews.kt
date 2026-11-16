@@ -62,6 +62,7 @@ private fun Gt20ArabicCameraPreview() {
                 storageReady = true,
                 statusMessage = "",
                 onHome = {}, onMore = {}, onHistory = {},
+                onPlacePoint = { _, _ -> },
                 onUndo = {}, onClear = {}, onSave = {}, onExport = {},
                 onUnit = {}, onToggleScan = {}, onPreview = {}
             )
