@@ -466,10 +466,14 @@ private fun MeasureApp() {
             }
 
             if (showAdvanced) {
-            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
+            val advancedShort = LocalConfiguration.current.screenHeightDp < 700
+            Column(Modifier.fillMaxSize().safeDrawingPadding(),
+                verticalArrangement = Arrangement.SpaceBetween) {
                 Column(
                     Modifier.fillMaxWidth()
+                        .heightIn(max = if (advancedShort) 155.dp else 300.dp)
                         .background(Brush.verticalGradient(listOf(Color(0xF9081324), Color(0xDF152840))))
+                        .verticalScroll(rememberScrollState())
                         .padding(horizontal = 14.dp, vertical = 11.dp)
                 ) {
                     Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
@@ -578,7 +582,7 @@ private fun MeasureApp() {
                 Column(
                     Modifier.fillMaxWidth()
                         .background(Brush.verticalGradient(listOf(Color(0xE7182F4B), Color(0xFC081323))))
-                        .heightIn(max = 330.dp)
+                        .heightIn(max = if (advancedShort) 180.dp else 320.dp)
                         .verticalScroll(rememberScrollState())
                         .padding(horizontal = 14.dp, vertical = 13.dp)
                 ) {

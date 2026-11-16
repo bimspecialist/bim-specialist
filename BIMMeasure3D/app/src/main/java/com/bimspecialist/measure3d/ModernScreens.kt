@@ -20,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalDensity
 import com.bimspecialist.measure3d.core.DisplayUnit
 import com.bimspecialist.measure3d.core.MeasureFormat
 import java.util.Locale
@@ -45,26 +46,34 @@ internal fun ModernHomeScreen(
     onUpdates: () -> Unit
 ) {
     fun tr(a: String, b: String) = if (arabic) a else b
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(navy, midnight, navy)))
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 18.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(
+        Brush.verticalGradient(listOf(navy, midnight, navy))
+    )) {
+        val profile = ResponsiveUiPolicy.forBounds(
+            maxWidth.value.toInt(), maxHeight.value.toInt(), LocalDensity.current.fontScale
+        )
+        Column(
+            modifier = Modifier.fillMaxSize()
+                .safeDrawingPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = profile.horizontalPaddingDp.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(if (profile.compact) 10.dp else 14.dp)
+        ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Column {
-                Text("BIM MEASURE", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.ExtraBold)
-                Text("3D  ·  BIM SPECIALIST", color = sky, fontSize = 11.sp, letterSpacing = 2.sp)
+            Column(Modifier.weight(1f)) {
+                Text("BIM MEASURE", color = Color.White,
+                    fontSize = if (profile.compact) 21.sp else 25.sp,
+                    fontWeight = FontWeight.ExtraBold, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis)
+                Text("3D  ·  BIM SPECIALIST", color = sky,
+                    fontSize = 11.sp, letterSpacing = 1.5.sp, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis)
             }
-            TextButton(onClick = onUpdates) {
+            TextButton(onClick = onUpdates, modifier = Modifier.heightIn(min = 48.dp)) {
                 Text(if (newUpdate) tr("تحديث متاح", "Update") else tr("التحديثات", "Updates"),
                     fontSize = 12.sp, color = sky)
             }
@@ -78,10 +87,12 @@ internal fun ModernHomeScreen(
             shape = RoundedCornerShape(22.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Column(Modifier.padding(if (profile.compact) 13.dp else 18.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
                     tr("القياس الذكي بكاميرا الجوال", "Measure with your phone"),
-                    fontSize = 23.sp, fontWeight = FontWeight.Bold, color = Color.White
+                    fontSize = if (profile.compact) 19.sp else 23.sp,
+                    fontWeight = FontWeight.Bold, color = Color.White
                 )
                 Text(
                     tr("اختر أداة واحدة، وجّه الكاميرا إلى السطح، ثم احفظ النتيجة.",
@@ -89,9 +100,11 @@ internal fun ModernHomeScreen(
                     fontSize = 13.sp, color = muted, lineHeight = 20.sp
                 )
                 Spacer(Modifier.height(4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    LabelPill(tr("بدون حساب", "No account"))
-                    LabelPill(tr("حفظ محلي", "Local saving"))
+                if (profile.showHomeTagline) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        LabelPill(tr("بدون حساب", "No account"))
+                        LabelPill(tr("حفظ محلي", "Local saving"))
+                    }
                 }
             }
         }
@@ -104,6 +117,8 @@ internal fun ModernHomeScreen(
             tr("قياس الطول", "Measure length"),
             tr("اختر نقطتين واحصل على الطول فورًا", "Tap two points to measure distance"),
             tr("ابدأ القياس", "Start measuring"),
+            iconDp = profile.cardIconDp,
+            minHeightDp = profile.cardMinHeightDp,
             onClick = { onStart(ToolMode.LENGTH) }
         )
         ModeCard(
@@ -111,6 +126,8 @@ internal fun ModernHomeScreen(
             tr("قياس المساحة", "Measure area"),
             tr("حدد الزوايا لعرض المساحة والمحيط", "Mark corners to calculate area and perimeter"),
             tr("ابدأ القياس", "Start measuring"),
+            iconDp = profile.cardIconDp,
+            minHeightDp = profile.cardMinHeightDp,
             onClick = { onStart(ToolMode.AREA) }
         )
         ModeCard(
@@ -118,6 +135,8 @@ internal fun ModernHomeScreen(
             tr("المسح ثلاثي الأبعاد", "3D point scan"),
             tr("التقاط سحابة نقاط تجريبية حول الجسم", "Capture an experimental 3D point cloud"),
             tr("ابدأ المسح", "Start scanning"),
+            iconDp = profile.cardIconDp,
+            minHeightDp = profile.cardMinHeightDp,
             onClick = { onStart(ToolMode.SCAN) }
         )
 
@@ -135,12 +154,12 @@ internal fun ModernHomeScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = onProjects, enabled = storageReady,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                         contentPadding = PaddingValues(horizontal = 4.dp)
                     ) { Text(tr("المشاريع", "Projects"), fontSize = 13.sp) }
                     OutlinedButton(
                         onClick = onHistory, enabled = storageReady,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                         contentPadding = PaddingValues(horizontal = 4.dp)
                     ) { Text(tr("سجل القياسات", "History"), fontSize = 13.sp) }
                 }
@@ -151,6 +170,7 @@ internal fun ModernHomeScreen(
                 "ARCore measurements are estimates. Verify dimensions with a tape before engineering use."),
             color = muted, fontSize = 11.sp, lineHeight = 17.sp
         )
+        }
     }
 }
 
@@ -168,30 +188,34 @@ private fun ModeCard(
     title: String,
     description: String,
     action: String,
+    iconDp: Int,
+    minHeightDp: Int,
     onClick: () -> Unit
 ) {
     Surface(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().heightIn(min = 106.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(min = minHeightDp.dp),
         color = Color(0xFF142C47),
         shape = RoundedCornerShape(20.dp),
         border = BorderStroke(1.dp, electric.copy(alpha = 0.28f))
     ) {
         Row(
-            Modifier.padding(horizontal = 15.dp, vertical = 13.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            Modifier.padding(horizontal = 12.dp, vertical = if (minHeightDp < 100) 9.dp else 13.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
-                modifier = Modifier.size(70.dp).background(
+                modifier = Modifier.size(iconDp.dp).background(
                     Brush.linearGradient(listOf(Color(0xFF1E507B), Color(0xFF153654))),
                     RoundedCornerShape(16.dp)
                 ),
                 contentAlignment = Alignment.Center
-            ) { ModeSymbol(mode, Modifier.size(50.dp)) }
+            ) { ModeSymbol(mode, Modifier.size((iconDp * 0.72f).dp)) }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(title, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                Text(description, fontSize = 12.sp, color = muted, lineHeight = 17.sp)
+                Text(title, fontSize = if (minHeightDp < 100) 16.sp else 17.sp,
+                    fontWeight = FontWeight.Bold, color = Color.White)
+                Text(description, fontSize = 12.sp, color = muted, lineHeight = 17.sp,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(action, fontSize = 12.sp, color = electric, fontWeight = FontWeight.SemiBold)
             }
         }
@@ -276,10 +300,36 @@ internal fun ModernCameraOverlay(
         mode, measured != null, isTracking, anchorsStable, storageReady,
         scanCount, scanning
     )
-    Box(Modifier.fillMaxSize()) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val profile = ResponsiveUiPolicy.forBounds(
+            maxWidth.value.toInt(), maxHeight.value.toInt(), LocalDensity.current.fontScale
+        )
+        if (mode != ToolMode.SCAN && pointCount == 0) {
+            Canvas(Modifier.align(Alignment.Center).size(54.dp)) {
+                val cx = size.width * 0.5f
+                val cy = size.height * 0.5f
+                val length = size.width * 0.17f
+                val gap = size.width * 0.075f
+                val lineColor = Color.White.copy(alpha = if (isTracking) 0.8f else 0.35f)
+                drawLine(lineColor, Offset(cx - length - gap, cy),
+                    Offset(cx - gap, cy), strokeWidth = 2.dp.toPx())
+                drawLine(lineColor, Offset(cx + gap, cy),
+                    Offset(cx + length + gap, cy), strokeWidth = 2.dp.toPx())
+                drawLine(lineColor, Offset(cx, cy - length - gap),
+                    Offset(cx, cy - gap), strokeWidth = 2.dp.toPx())
+                drawLine(lineColor, Offset(cx, cy + gap),
+                    Offset(cx, cy + length + gap), strokeWidth = 2.dp.toPx())
+            }
+        }
         Row(
-            Modifier.fillMaxWidth().align(Alignment.TopCenter)
-                .statusBarsPadding()
+            Modifier.width(
+                if (profile.landscape)
+                    (maxWidth.value - profile.sidePanelWidthDp).coerceAtLeast(170f).dp
+                else maxWidth
+            ).align(Alignment.TopStart)
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(
+                    WindowInsetsSides.Top + WindowInsetsSides.Horizontal
+                ))
                 .background(Color(0xEC081627))
                 .padding(horizontal = 10.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -299,19 +349,38 @@ internal fun ModernCameraOverlay(
             }
         }
         Column(
-            Modifier.fillMaxWidth().align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .heightIn(max = 365.dp)
+            Modifier
+                .align(if (profile.landscape) Alignment.CenterEnd else Alignment.BottomCenter)
+                .then(
+                    if (profile.landscape)
+                        Modifier.width(profile.sidePanelWidthDp.dp).fillMaxHeight()
+                    else
+                        Modifier.fillMaxWidth().heightIn(max = profile.panelMaxHeightDp.dp)
+                )
+                .background(
+                    Color(0xF4081627),
+                    if (profile.landscape) RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp)
+                    else RoundedCornerShape(topStart = 25.dp, topEnd = 25.dp)
+                )
+                .then(
+                    if (profile.landscape) Modifier.safeDrawingPadding()
+                    else Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(
+                        WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal
+                    ))
+                )
                 .verticalScroll(rememberScrollState())
-                .background(Color(0xF4081627), RoundedCornerShape(topStart = 25.dp, topEnd = 25.dp))
-                .padding(horizontal = 18.dp, vertical = 15.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(horizontal = profile.horizontalPaddingDp.dp,
+                    vertical = if (profile.compact) 10.dp else 13.dp),
+            verticalArrangement = Arrangement.spacedBy(if (profile.compact) 6.dp else 8.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 val statusColor = if (isTracking) Color(0xFF75E2C3) else Color(0xFFFFD48F)
-                Surface(color = statusColor.copy(alpha = 0.14f),
-                    shape = RoundedCornerShape(40)) {
+                Surface(
+                    modifier = Modifier.weight(1f, fill = false),
+                    color = statusColor.copy(alpha = 0.14f),
+                    shape = RoundedCornerShape(40)
+                ) {
                     Text(
                         when {
                             !isTracking -> tr("جاري البحث عن سطح", "Searching for surface")
@@ -319,22 +388,25 @@ internal fun ModernCameraOverlay(
                                 tr("انتظر ثبات النقاط", "Stabilizing points")
                             else -> tr("الكاميرا جاهزة", "Camera ready")
                         },
-                        color = statusColor, fontSize = 11.sp,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        color = statusColor, fontSize = if (profile.compact) 10.sp else 11.sp,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
                     )
                 }
-                Spacer(Modifier.weight(1f))
                 if (mode != ToolMode.SCAN) {
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         DisplayUnit.entries.forEach { choice ->
                             Surface(
                                 onClick = { onUnit(choice) },
+                                modifier = Modifier.widthIn(min = 48.dp).height(44.dp),
                                 color = if (choice == unit) electric else Color(0xFF28445D),
                                 shape = RoundedCornerShape(9.dp)
                             ) {
-                                Text(choice.label, fontSize = 11.sp,
-                                    color = if (choice == unit) navy else Color.White,
-                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp))
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text(choice.label, fontSize = 11.sp,
+                                        color = if (choice == unit) navy else Color.White,
+                                        maxLines = 1)
+                                }
                             }
                         }
                     }
@@ -354,6 +426,7 @@ internal fun ModernCameraOverlay(
                 Text(tr("المحيط: ", "Perimeter: ") + MeasureFormat.distance(perimeter, unit),
                     color = sky, fontSize = 13.sp)
             }
+            if (!profile.compact || measured == null) {
             Text(
                 when {
                     mode == ToolMode.SCAN -> tr(
@@ -367,9 +440,11 @@ internal fun ModernCameraOverlay(
                 color = muted, fontSize = 11.sp, maxLines = 2,
                 lineHeight = 16.sp
             )
+            }
             if (mode == ToolMode.SCAN) {
                 Button(
-                    onClick = onToggleScan, modifier = Modifier.fillMaxWidth().height(50.dp),
+                    onClick = onToggleScan,
+                    modifier = Modifier.fillMaxWidth().height(profile.primaryButtonHeightDp.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = electric),
                     shape = RoundedCornerShape(15.dp)
                 ) {
@@ -385,11 +460,15 @@ internal fun ModernCameraOverlay(
                     OutlinedButton(onClick = onExport, enabled = dataReady, modifier = Modifier.weight(1f)) {
                         Text(tr("تصدير", "Export"))
                     }
-                    TextButton(onClick = onClear, enabled = scanCount > 0) { Text(tr("مسح", "Clear")) }
+                    TextButton(onClick = onClear, enabled = scanCount > 0,
+                        modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text(tr("مسح", "Clear"), maxLines = 1)
+                    }
                 }
             } else {
                 Button(
-                    onClick = onSave, enabled = ready, modifier = Modifier.fillMaxWidth().height(50.dp),
+                    onClick = onSave, enabled = ready,
+                    modifier = Modifier.fillMaxWidth().height(profile.primaryButtonHeightDp.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = electric),
                     shape = RoundedCornerShape(15.dp)
                 ) {

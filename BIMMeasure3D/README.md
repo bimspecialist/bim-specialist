@@ -1,6 +1,21 @@
-# BIM Measure 3D · v0.6.0 Beta
+# BIM Measure 3D · v0.6.1 Beta
 
 Experimental Android engineering measurement and modeling app by BIM Specialist.
+
+## GT 20 Pro responsive interface (v0.6.1 beta)
+
+Hardware reference: Infinix GT 20 Pro has a 6.78-inch screen, 1080 × 2436 physical pixels and a 20.3:9 aspect ratio. Android display size, logical dp, font scale and gesture-navigation insets vary by user setting. **The UI detects its available dp bounds at runtime, not a hardcoded device model or pixel density.**
+
+- The landing page uses safe drawing insets for the top camera cutout and gesture navigation.
+- Compact cards and a smaller heading respond to font scaling, small screens and display-size settings without cutting off labels.
+- The capture screen reserves a substantial central camera region by capping the bottom sheet using the height available in dp.
+- The camera screen places its controls in a **right/left side panel (using layout alignment)** in landscape, retaining the camera view.
+- Measurement units have larger tap targets, tracking status truncates safely, and primary buttons are at least 48dp tall.
+- The advanced controls respect Android safe drawing insets and have bounded scrollable regions.
+- Added Android Studio design previews for GT20-like 393 × 880dp, Arabic home, Arabic capture and 135% font size.
+- Added pure unit tests for tall portrait, 135%-150% font scale, narrower displays, landscape and invalid layout inputs.
+
+**These changes are UI layout adaptations, not proof of physical Infinix hardware compatibility.** Actual dp dimensions may differ; verify on the device and capture a screenshot with Android settings (display size, font size and gesture nav) noted. The phone's **ARCore support must be checked independently** before camera-measurement functionality can be assumed to work.
 
 ## Redesigned camera interface in v0.6
 
@@ -118,3 +133,5 @@ JDK 21, Gradle 8.13, Android SDK 36, Android Gradle Plugin 8.13.2, Kotlin 2.3.21
 - `0.5.0-beta`: SQLite transactional persistence, legacy migration, IO dispatch, AR anchor stability, explicit CAD axes and simulated database fault tests.
 
 - `0.6.0-beta`: new home dashboard, simplified camera controls, accessible navigation, collapsible advanced tools, export choices and minimal-screen state tests.
+
+- `0.6.1-beta`: runtime sizing and insets for GT 20 Pro class screens; landscape side panel, accessible tap targets, compact home cards and UI layout tests.
