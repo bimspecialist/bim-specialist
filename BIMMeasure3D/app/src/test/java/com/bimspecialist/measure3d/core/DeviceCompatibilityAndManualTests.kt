@@ -88,4 +88,16 @@ class DeviceCompatibilityAndManualTests {
             fail("Unrecognized measurement source must not be saved")
         } catch (_: IllegalArgumentException) {}
     }
+    @Test fun manualRectangleExportsHorizontallyToCadZUp() {
+        val result = ManualMeasurementCalculator.calculate(
+            ManualMeasureMode.RECTANGULAR_AREA, "2", "3", DisplayUnit.METRE
+        )
+        val cadPoints = result.points.map {
+            CadAxes.fromArCore(it, DxfCoordinateSystem.CAD_Z_UP)
+        }
+        assertTrue(cadPoints.all { kotlin.math.abs(it.z) < 1e-12 })
+        assertEquals(6.0, Geometry.planarArea(result.points), 1e-9)
+        assertEquals(6.0, Geometry.planarArea(cadPoints), 1e-9)
+    }
+
 }

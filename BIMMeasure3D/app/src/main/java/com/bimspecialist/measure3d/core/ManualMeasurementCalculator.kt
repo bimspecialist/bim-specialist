@@ -53,8 +53,10 @@ object ManualMeasurementCalculator {
                 val footprint = listOf(
                     Vec3(0.0, 0.0, 0.0),
                     Vec3(length, 0.0, 0.0),
-                    Vec3(length, width, 0.0),
-                    Vec3(0.0, width, 0.0)
+                    // Horizontal plane in ARCore-like local coordinates: Y is up.
+                    // CAD_Z_UP rotates it onto the horizontal XY plane in DXF.
+                    Vec3(length, 0.0, width),
+                    Vec3(0.0, 0.0, width)
                 )
                 ManualMeasurement(
                     "AREA", length * width, 2 * (length + width),

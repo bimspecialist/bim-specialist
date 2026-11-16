@@ -1419,7 +1419,12 @@ private fun MeasureApp() {
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 TextButton(onClick = {
                                     export("measurement_${record.id.take(8)}.dxf",
-                                        Exports.dxf(record.points, record.kind == "AREA", dxfCoordinates))
+                                        Exports.dxf(
+                                            record.points,
+                                            record.kind == "AREA",
+                                            if (record.source == "MANUAL") DxfCoordinateSystem.CAD_Z_UP
+                                            else dxfCoordinates
+                                        ))
                                 }) { Text("DXF") }
                                 TextButton(onClick = {
                                     export("measurement_${record.id.take(8)}.csv",
