@@ -4,6 +4,7 @@ on:
     branches:
       - bim-measure-3d-android-build
       - bim-measure-3d-reliability-fixes
+      - bim-measure-3d-ui-redesign
     paths:
       - 'BIMMeasure3D/**'
       - '.github/workflows/bim-measure-3d-apk.yml'
@@ -37,7 +38,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: BIMMeasure3D-0.5-reliability-test-results
+          name: BIMMeasure3D-0.6-ui-test-results
           path: BIMMeasure3D/app/build/test-results/testDebugUnitTest/
           if-no-files-found: ignore
       - name: Verify APK package and debug signature
@@ -51,7 +52,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BIMMeasure3D-0.5-CI-DEBUG-NOT-FOR-UPDATES
+          name: BIMMeasure3D-0.6-CI-DEBUG-NOT-FOR-UPDATES
           path: BIMMeasure3D/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 90

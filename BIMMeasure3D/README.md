@@ -1,6 +1,20 @@
-# BIM Measure 3D · v0.5.0 Beta
+# BIM Measure 3D · v0.6.0 Beta
 
 Experimental Android engineering measurement and modeling app by BIM Specialist.
+
+## Redesigned camera interface in v0.6
+
+This update replaces the default crowded AR screen with an approachable **start dashboard** and a dedicated minimal **camera screen**, following the original blue/navy visual concept. This is implemented using live Jetpack Compose UI, not a static image.
+
+1. Launch app → choose **Length**, **Area**, or **3D Point Scan** from large labelled cards.
+2. Camera opens only after choosing a tool. Watch tracking status, tap points on the camera, and read the prominent result.
+3. Press **Save measurement**. Units can be switched without opening another page.
+4. Use **Undo**, **Reset** or **Export** as needed. Choose DXF/CSV or PLY/XYZ in an uncluttered export dialog.
+5. Tap **More** for professional tools: DXF axes, reference error, STL/OBJ extrusion, advanced geometry and cloud controls.
+6. Tap **Home** (or Android Back) to leave. If unsaved points exist, a confirmation prevents accidental data loss.
+7. **Projects**, **History**, and **Updates** are available from the start dashboard. Project backup/restore remain available within Projects.
+
+**Note:** Screen design follows the earlier **concept illustrations** but is not pixel-identical; the camera preview and AR tracking require a supported Android phone. UI camera positioning, real-world usability and accessibility still require device tests.
 
 ## Reliability improvements in 0.5.0-beta
 
@@ -102,3 +116,5 @@ JDK 21, Gradle 8.13, Android SDK 36, Android Gradle Plugin 8.13.2, Kotlin 2.3.21
 - `0.3.0-beta`: named local projects, tape-reference error comparison, real watertight extrusion STL/OBJ from area, interactive solid preview, cloud bounding dimensions, adaptive icon, lifecycle cleanup, extra tests and lint
 - `0.4.0-beta`: persistent release-signing workflow (requires owner secrets), in-app version checks and verified package installation with Android user consent, full JSON backup/restore, update validation tests and clearer CI debug labeling.
 - `0.5.0-beta`: SQLite transactional persistence, legacy migration, IO dispatch, AR anchor stability, explicit CAD axes and simulated database fault tests.
+
+- `0.6.0-beta`: new home dashboard, simplified camera controls, accessible navigation, collapsible advanced tools, export choices and minimal-screen state tests.

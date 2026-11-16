@@ -10,6 +10,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import android.view.MotionEvent
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -53,7 +55,7 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.*
 
-private enum class ToolMode { LENGTH, AREA, SCAN }
+internal enum class ToolMode { LENGTH, AREA, SCAN }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -105,7 +107,11 @@ private fun MeasureApp() {
     var pendingMode by remember { mutableStateOf<ToolMode?>(null) }
     var showScanReset by remember { mutableStateOf(false) }
 
-    var mode by remember { mutableStateOf(ToolMode.LENGTH) }
+    var mode by rememberSaveable { mutableStateOf(ToolMode.LENGTH) }
+    var showHome by rememberSaveable { mutableStateOf(true) }
+    var showAdvanced by remember { mutableStateOf(false) }
+    var showExportOptions by remember { mutableStateOf(false) }
+    var pendingHome by remember { mutableStateOf(false) }
     var unit by remember { mutableStateOf(DisplayUnit.METRE) }
     var dxfCoordinates by remember { mutableStateOf(DxfCoordinateSystem.ARCORE_RAW) }
     val anchors = remember { mutableStateListOf<Anchor>() }
@@ -222,6 +228,16 @@ private fun MeasureApp() {
             ToolMode.SCAN -> tr("اجمع سحابة نقاط أولية. ليست شبكة مجسم للطباعة.", "Capture a sparse point cloud, not a printable mesh.")
         }
     }
+    fun requestHome() {
+        if (CaptureUiPolicy.requiresDiscardConfirmation(anchors.size, sampler.count())) {
+            pendingHome = true
+        } else {
+            clearAnchors()
+            resetScan()
+            showAdvanced = false
+            showHome = true
+        }
+    }
     fun requestMode(next: ToolMode) {
         if (next == mode) return
         if (anchors.isNotEmpty() || sampler.count() > 0) pendingMode = next else switchNow(next)
@@ -282,7 +298,44 @@ private fun MeasureApp() {
         }
     }
 
+    BackHandler(enabled = !showHome) {
+        if (showAdvanced) showAdvanced = false else requestHome()
+    }
     MaterialTheme(colorScheme = darkColorScheme(primary = brightBlue, background = deepNavy)) {
+        if (showHome) {
+            ModernHomeScreen(
+                arabic = arabic,
+                projectName = if (projectId == "general") tr("عام", "General")
+                    else projects.firstOrNull { it.id == projectId }?.name ?: "General",
+                savedCount = savedRecords.count { it.projectId == projectId },
+                storageReady = storageReady,
+                newUpdate = availableUpdate != null,
+                updateMessage = updateStatus,
+                onStart = { selected ->
+                    switchNow(selected)
+                    showAdvanced = false
+                    showHome = false
+                },
+                onProjects = { if (storageReady) projectPicker = true },
+                onHistory = { showHistory = true },
+                onUpdates = {
+                    updateDismissed = false
+                    updateChecking = true
+                    uiScope.launch {
+                        try {
+                            availableUpdate = AppUpdater.checkAvailable()
+                            if (availableUpdate == null) {
+                                updateStatus = tr("لا يوجد تحديث جديد متاح.", "No new update available.")
+                            }
+                        } catch (_: Exception) {
+                            updateStatus = tr("تعذر التحقق من التحديثات حاليًا.", "Unable to check updates.")
+                        } finally {
+                            updateChecking = false
+                        }
+                    }
+                }
+            )
+        } else {
         Box(Modifier.fillMaxSize().background(deepNavy).onSizeChanged {
             viewWidth = it.width
             viewHeight = it.height
@@ -350,7 +403,7 @@ private fun MeasureApp() {
                     }
                 },
                 onTouchEvent = { event, _ ->
-                    if (event.actionMasked == MotionEvent.ACTION_UP && mode != ToolMode.SCAN && !showHistory && !projectPicker && pendingProjectId == null && !referenceDialog && pendingMode == null && backupRestoreInfo == null && solidPreview == null && !showScanReset && !(availableUpdate != null && !updateDismissed)) {
+                    if (event.actionMasked == MotionEvent.ACTION_UP && mode != ToolMode.SCAN && !showHistory && !projectPicker && pendingProjectId == null && !referenceDialog && pendingMode == null && backupRestoreInfo == null && solidPreview == null && !showScanReset && !(availableUpdate != null && !updateDismissed) && !showExportOptions && !pendingHome) {
                         val hit = frameRef[0]?.hitTest(event)?.firstOrNull {
                             it.trackable is Plane && it.trackable.trackingState == TrackingState.TRACKING &&
                                 (it.trackable as Plane).isPoseInPolygon(it.hitPose)
@@ -412,6 +465,7 @@ private fun MeasureApp() {
                 CloudPreview(preview.orEmpty(), Modifier.fillMaxSize())
             }
 
+            if (showAdvanced) {
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
                 Column(
                     Modifier.fillMaxWidth()
@@ -420,6 +474,9 @@ private fun MeasureApp() {
                 ) {
                     Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                         Column {
+                            TextButton(onClick = { showAdvanced = false }) {
+                                Text(tr("العودة للواجهة البسيطة", "Back to simple view"), color = paleBlue)
+                            }
                             Text("BIM Measure 3D", fontSize = 23.sp, fontWeight = FontWeight.Bold, color = Color.White)
                             Text("BIM SPECIALIST  •  ${BuildConfig.VERSION_NAME}", fontSize = 10.sp, color = paleBlue)
                         }
@@ -726,6 +783,154 @@ private fun MeasureApp() {
                     )
                 }
             }
+            } else {
+                ModernCameraOverlay(
+                    arabic = arabic,
+                    mode = mode,
+                    unit = unit,
+                    measured = measured,
+                    perimeter = perimeter,
+                    pointCount = vertices.size,
+                    scanning = scanning,
+                    scanCount = scanCount,
+                    isTracking = isTracking,
+                    anchorsStable = anchorsStable,
+                    storageReady = storageReady,
+                    statusMessage = message,
+                    onHome = { requestHome() },
+                    onMore = { showAdvanced = true },
+                    onHistory = { showHistory = true },
+                    onUndo = {
+                        if (anchors.isNotEmpty()) {
+                            referenceResult = null
+                            anchors.removeAt(anchors.lastIndex).detach()
+                            stability.reset()
+                            anchorsStable = false
+                            overlay = emptyList()
+                        }
+                    },
+                    onClear = {
+                        if (mode == ToolMode.SCAN) showScanReset = true
+                        else {
+                            referenceResult = null
+                            clearAnchors()
+                        }
+                    },
+                    onSave = { saveCurrent() },
+                    onExport = { showExportOptions = true },
+                    onUnit = { selected ->
+                        if (storageReady) {
+                            val previous = unit
+                            unit = selected
+                            uiScope.launch {
+                                try {
+                                    withContext(Dispatchers.IO) { projectStore.saveUnit(selected) }
+                                } catch (e: Exception) {
+                                    unit = previous
+                                    message = tr("تعذر حفظ الوحدة: ", "Cannot save unit: ") +
+                                        (e.localizedMessage ?: "")
+                                }
+                            }
+                        }
+                    },
+                    onToggleScan = {
+                        if (scanning) {
+                            scanning = false
+                            scanStats = CloudAnalysis.compute(sampler.snapshot())
+                            message = tr("تم إيقاف المسح مؤقتًا.", "Scanning paused.")
+                        } else if (!sampler.isFull()) {
+                            preview = null
+                            scanning = true
+                            message = tr("حرّك الكاميرا ببطء حول الجسم.", "Move slowly around the object.")
+                        }
+                    },
+                    onPreview = {
+                        preview = if (preview == null) sampler.snapshot() else null
+                    }
+                )
+            }
+        }
+        }
+
+        if (showExportOptions) {
+            AlertDialog(
+                onDismissRequest = { showExportOptions = false },
+                title = { Text(tr("تصدير النتيجة", "Export result")) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (mode == ToolMode.SCAN) {
+                            Text(tr("اختر صيغة السحابة النقطية. لا تنتج هذه الأداة شبكة STL.",
+                                "Choose a point-cloud format. This mode does not create a printable STL."),
+                                fontSize = 12.sp)
+                            Button(onClick = {
+                                showExportOptions = false
+                                export("scan_points_m.ply", Exports.ply(sampler.snapshot()))
+                            }, modifier = Modifier.fillMaxWidth()) { Text("PLY") }
+                            OutlinedButton(onClick = {
+                                showExportOptions = false
+                                export("scan_points_m.xyz", Exports.xyz(sampler.snapshot()))
+                            }, modifier = Modifier.fillMaxWidth()) { Text("XYZ") }
+                        } else {
+                            Text(tr("DXF للمخططات وCSV للجدول. يمكنك إنشاء STL وOBJ من المساحة عبر «المزيد».",
+                                "DXF for CAD, CSV for data. STL/OBJ from an area are under More."),
+                                fontSize = 12.sp)
+                            Button(onClick = {
+                                if (measured != null) {
+                                    showExportOptions = false
+                                    export(
+                                        if (mode == ToolMode.LENGTH) "length_mm.dxf" else "area_mm.dxf",
+                                        Exports.dxf(vertices, mode == ToolMode.AREA, dxfCoordinates)
+                                    )
+                                }
+                            }, enabled = measured != null && anchorsStable, modifier = Modifier.fillMaxWidth()) {
+                                Text("DXF")
+                            }
+                            OutlinedButton(onClick = {
+                                if (measured != null) {
+                                    showExportOptions = false
+                                    export(
+                                        if (mode == ToolMode.LENGTH) "length.csv" else "area.csv",
+                                        Exports.measurementCsv(
+                                            if (mode == ToolMode.LENGTH) "LENGTH" else "AREA",
+                                            vertices, measured!!, perimeter
+                                        )
+                                    )
+                                }
+                            }, enabled = measured != null && anchorsStable, modifier = Modifier.fillMaxWidth()) {
+                                Text("CSV")
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showExportOptions = false }) {
+                        Text(tr("إغلاق", "Close"))
+                    }
+                }
+            )
+        }
+        if (pendingHome) {
+            AlertDialog(
+                onDismissRequest = { pendingHome = false },
+                title = { Text(tr("العودة للرئيسية؟", "Return to home?")) },
+                text = { Text(tr(
+                    "سيتم مسح نقاط القياس الحالية غير المحفوظة. ستبقى القياسات المحفوظة في المشروع.",
+                    "Unsaved capture points will be cleared. Saved project records are preserved."
+                )) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        pendingHome = false
+                        clearAnchors()
+                        resetScan()
+                        referenceResult = null
+                        showAdvanced = false
+                        showHome = true
+                    }) { Text(tr("العودة", "Home")) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingHome = false }) { Text(tr("إلغاء", "Cancel")) }
+                }
+            )
         }
 
         if (availableUpdate != null && !updateDismissed) {
