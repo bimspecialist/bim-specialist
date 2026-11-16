@@ -6,6 +6,8 @@ import java.io.File
 import com.bimspecialist.measure3d.updates.AppUpdater
 import com.bimspecialist.measure3d.updates.AppUpdate
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -72,14 +74,11 @@ private fun MeasureApp() {
     val arabic = currentLocale.language == "ar"
     fun tr(ar: String, en: String) = if (arabic) ar else en
 
-    val prefs = remember(context) {
-        context.applicationContext.getSharedPreferences("bim_measure_display", android.content.Context.MODE_PRIVATE)
-    }
     val uiScope = rememberCoroutineScope()
     val store = remember(context) { MeasurementStore(context) }
     val projectStore = remember(context) { ProjectStore(context) }
-    var projects by remember { mutableStateOf(projectStore.load()) }
-    var projectId by remember { mutableStateOf(projectStore.selectedId()) }
+    var projects by remember { mutableStateOf(listOf(FieldProject("general", "General", 0L))) }
+    var projectId by remember { mutableStateOf("general") }
     var pendingProjectId by remember { mutableStateOf<String?>(null) }
     var projectPicker by remember { mutableStateOf(false) }
     var projectInput by remember { mutableStateOf("") }
@@ -92,7 +91,8 @@ private fun MeasureApp() {
     var solidPreview by remember { mutableStateOf<SolidMesh?>(null) }
     var extrudeReverse by remember { mutableStateOf(false) }
     var scanStats by remember { mutableStateOf<CloudStats?>(null) }
-    var savedRecords by remember { mutableStateOf(store.load()) }
+    var savedRecords by remember { mutableStateOf(emptyList<SavedMeasurement>()) }
+    var storageReady by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var backupRestoreData by remember { mutableStateOf<ByteArray?>(null) }
     var backupRestoreInfo by remember { mutableStateOf<BackupContents?>(null) }
@@ -106,12 +106,8 @@ private fun MeasureApp() {
     var showScanReset by remember { mutableStateOf(false) }
 
     var mode by remember { mutableStateOf(ToolMode.LENGTH) }
-    var unit by remember {
-        mutableStateOf(
-            DisplayUnit.entries.firstOrNull { it.name == prefs.getString("unit", DisplayUnit.METRE.name) }
-                ?: DisplayUnit.METRE
-        )
-    }
+    var unit by remember { mutableStateOf(DisplayUnit.METRE) }
+    var dxfCoordinates by remember { mutableStateOf(DxfCoordinateSystem.ARCORE_RAW) }
     val anchors = remember { mutableStateListOf<Anchor>() }
     val sampler = remember { PointSampler() }
     var scanning by remember { mutableStateOf(false) }
@@ -124,10 +120,26 @@ private fun MeasureApp() {
     var viewHeight by remember { mutableIntStateOf(0) }
     var overlay by remember { mutableStateOf(emptyList<ScreenPoint>()) }
     var isTracking by remember { mutableStateOf(false) }
+    var anchorsStable by remember { mutableStateOf(false) }
+    val stability = remember { ArStabilityMonitor() }
     var message by remember { mutableStateOf(tr(
         "حرّك الهاتف لاكتشاف السطح، ثم انقر لتثبيت نقاط القياس.",
         "Move the phone to detect a plane, then tap to place measurement points."
     )) }
+    LaunchedEffect(context) {
+        try {
+            val snapshot = withContext(Dispatchers.IO) { FieldDatabase.get(context).snapshot() }
+            projects = snapshot.projects
+            projectId = snapshot.selectedProject
+            savedRecords = snapshot.measurements
+            unit = snapshot.unit
+            storageReady = true
+        } catch (e: Exception) {
+            storageReady = false
+            message = tr("تعذر تحميل البيانات دون فقدها: ", "Stored records cannot be opened safely: ") +
+                (e.localizedMessage ?: "")
+        }
+    }
     LaunchedEffect(Unit) {
         // The application remains fully usable offline, even if the release endpoint is unavailable.
         availableUpdate = try { AppUpdater.checkAvailable() } catch (_: Exception) { null }
@@ -138,36 +150,38 @@ private fun MeasureApp() {
         ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri ->
         val bytes = pendingData
-        if (uri != null && bytes != null) {
+        pendingData = null
+        if (uri != null && bytes != null) uiScope.launch {
             try {
-                context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
-                    ?: throw IllegalStateException("Cannot open selected document")
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                        ?: throw IllegalStateException("Cannot open selected document")
+                }
                 message = tr("تم حفظ الملف في الموقع الذي اخترته.", "File saved in selected location.")
             } catch (e: Exception) {
                 message = tr("تعذر حفظ الملف: ", "Save failed: ") + (e.localizedMessage ?: "")
             }
         }
-        pendingData = null
     }
     val backupImporter = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
-        if (uri != null) {
+        if (uri != null) uiScope.launch {
             try {
-                val input = context.contentResolver.openInputStream(uri)
-                    ?: throw IllegalStateException("Unable to open selected file")
-                val bytes = input.use { stream ->
-                    val buffer = ByteArray(8192)
-                    val output = java.io.ByteArrayOutputStream()
-                    while (true) {
-                        val n = stream.read(buffer)
-                        if (n < 0) break
-                        require(output.size() + n <= 2_000_000) { "Backup file exceeds 2 MB" }
-                        output.write(buffer, 0, n)
-                    }
-                    output.toByteArray()
+                val bytes = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        val output = java.io.ByteArrayOutputStream()
+                        val buffer = ByteArray(8192)
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            require(output.size() + count <= 20_000_000) { "Backup exceeds 20 MB" }
+                            output.write(buffer, 0, count)
+                        }
+                        output.toByteArray()
+                    } ?: error("Unable to read backup")
                 }
-                val info = ProjectBackup.inspect(bytes)
+                val info = withContext(Dispatchers.IO) { ProjectBackup.inspect(bytes) }
                 backupRestoreData = bytes
                 backupRestoreInfo = info
                 projectPicker = false
@@ -184,6 +198,8 @@ private fun MeasureApp() {
     fun clearAnchors() {
         anchors.forEach { it.detach() }
         anchors.clear()
+        stability.reset()
+        anchorsStable = false
         overlay = emptyList()
     }
     fun resetScan() {
@@ -216,6 +232,8 @@ private fun MeasureApp() {
             if (event == Lifecycle.Event.ON_STOP) {
                 scanning = false
                 isTracking = false
+                anchorsStable = false
+                stability.reset()
                 frameRef[0] = null
             }
         }
@@ -245,13 +263,22 @@ private fun MeasureApp() {
 
     fun saveCurrent() {
         val value = measured ?: return
+        if (!storageReady || !isTracking || !anchorsStable) return
         val kind = if (mode == ToolMode.LENGTH) "LENGTH" else "AREA"
-        try {
-            store.add(kind, value, perimeter, vertices, projectId)
-            savedRecords = store.load()
-            message = tr("تم حفظ القياس محليًا في السجل.", "Measurement saved locally.")
-        } catch (e: Exception) {
-            message = tr("تعذر حفظ القياس: ", "Cannot save measurement: ") + (e.localizedMessage ?: "")
+        val pointsSnapshot = vertices.toList()
+        val destination = projectId
+        val measuredPerimeter = perimeter
+        uiScope.launch {
+            try {
+                savedRecords = withContext(Dispatchers.IO) {
+                    store.add(kind, value, measuredPerimeter, pointsSnapshot, destination)
+                    store.load()
+                }
+                message = tr("تم حفظ القياس محليًا في السجل.", "Measurement saved locally.")
+            } catch (e: Exception) {
+                message = tr("فشل الحفظ، ولم تُحذف القياسات القديمة: ",
+                    "Save failed without overwriting previous records: ") + (e.localizedMessage ?: "")
+            }
         }
     }
 
@@ -274,13 +301,18 @@ private fun MeasureApp() {
                         updateNanos[0] = now
                         isTracking = frame.camera.trackingState == TrackingState.TRACKING &&
                             anchors.all { it.trackingState == TrackingState.TRACKING }
+                        val currentAnchors = anchors.map { anchor ->
+                            val position = anchor.pose.translation
+                            Vec3(position[0].toDouble(), position[1].toDouble(), position[2].toDouble())
+                        }
+                        anchorsStable = stability.update(currentAnchors, isTracking)
                         if (anchors.isNotEmpty() && isTracking && viewWidth > 0 && viewHeight > 0) {
                             try {
                                 val view = FloatArray(16)
                                 val proj = FloatArray(16)
                                 frame.camera.getViewMatrix(view, 0)
                                 frame.camera.getProjectionMatrix(proj, 0, 0.1f, 100f)
-                                val projected = vertices.map { p ->
+                                val projected = currentAnchors.map { p ->
                                     ArProjection.worldToScreen(p, view, proj, viewWidth, viewHeight)
                                 }
                                 overlay = if (projected.all { it != null }) projected.filterNotNull() else emptyList()
@@ -312,7 +344,7 @@ private fun MeasureApp() {
                     }
                 },
                 onTouchEvent = { event, _ ->
-                    if (event.actionMasked == MotionEvent.ACTION_UP && mode != ToolMode.SCAN && !showHistory && !projectPicker && pendingProjectId == null && !referenceDialog && pendingMode == null) {
+                    if (event.actionMasked == MotionEvent.ACTION_UP && mode != ToolMode.SCAN && !showHistory && !projectPicker && pendingProjectId == null && !referenceDialog && pendingMode == null && backupRestoreInfo == null && solidPreview == null && !showScanReset && !(availableUpdate != null && !updateDismissed)) {
                         val hit = frameRef[0]?.hitTest(event)?.firstOrNull {
                             it.trackable is Plane && it.trackable.trackingState == TrackingState.TRACKING &&
                                 (it.trackable as Plane).isPoseInPolygon(it.hitPose)
@@ -333,6 +365,8 @@ private fun MeasureApp() {
                                     message = tr("اختر سطحًا يبعد بين 10 سم و8 أمتار.", "Select a surface between 0.1 and 8 metres away.")
                                 } else {
                                     anchors.add(hit.createAnchor())
+                                    stability.reset()
+                                    anchorsStable = false
                                     referenceResult = null
                                     message = tr("أضيفت النقطة ${anchors.size}.", "Point ${anchors.size} added.")
                                 }
@@ -436,7 +470,21 @@ private fun MeasureApp() {
                             DisplayUnit.entries.forEach { option ->
                                 FilterChip(
                                     selected = unit == option,
-                                    onClick = { unit = option; prefs.edit().putString("unit", option.name).apply() },
+                                    onClick = {
+                                        if (storageReady) {
+                                            val previous = unit
+                                            unit = option
+                                            uiScope.launch {
+                                                try {
+                                                    withContext(Dispatchers.IO) { projectStore.saveUnit(option) }
+                                                } catch (e: Exception) {
+                                                    unit = previous
+                                                    message = tr("فشل حفظ الوحدة: ", "Unable to save units: ") +
+                                                        (e.localizedMessage ?: "")
+                                                }
+                                            }
+                                        }
+                                    },
                                     label = { Text(option.label, fontSize = 11.sp) }
                                 )
                             }
@@ -472,8 +520,9 @@ private fun MeasureApp() {
                         .padding(horizontal = 14.dp, vertical = 13.dp)
                 ) {
                     Text(
-                        if (isTracking) tr("AR TRACKING  •  اتصال جيد", "AR TRACKING  •  active")
-                        else tr("AR SEARCHING  •  حرّك الهاتف ببطء", "AR SEARCHING  •  move device"),
+                        if (!isTracking) tr("AR SEARCHING  •  حرّك الهاتف ببطء", "AR SEARCHING  •  move device")
+                        else if (anchors.isNotEmpty() && !anchorsStable) tr("AR STABILIZING  •  انتظر استقرار النقاط", "AR STABILIZING  •  wait for anchors")
+                        else tr("AR TRACKING  •  التتبع مستقر", "AR TRACKING  •  stable"),
                         fontSize = 11.sp, color = if (isTracking) Color(0xFF83E4C4) else warningAmber
                     )
                     Spacer(Modifier.height(5.dp))
@@ -488,6 +537,8 @@ private fun MeasureApp() {
                                     if (anchors.isNotEmpty()) {
                                         referenceResult = null
                                         anchors.removeAt(anchors.lastIndex).detach()
+                                        stability.reset()
+                                        anchorsStable = false
                                         overlay = emptyList()
                                     }
                                 }, enabled = anchors.isNotEmpty(), modifier = Modifier.weight(1f),
@@ -498,18 +549,31 @@ private fun MeasureApp() {
                                     modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 3.dp)) {
                                     Text(tr("مسح", "Clear"), fontSize = 12.sp)
                                 }
-                                Button(onClick = { saveCurrent() }, enabled = measured != null && isTracking,
+                                Button(onClick = { saveCurrent() }, enabled = measured != null && isTracking && anchorsStable && storageReady,
                                     modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 3.dp)) {
                                     Text(tr("حفظ", "Save"), fontSize = 12.sp)
                                 }
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                DxfCoordinateSystem.entries.forEach { coordinateMode ->
+                                    FilterChip(
+                                        selected = dxfCoordinates == coordinateMode,
+                                        onClick = { dxfCoordinates = coordinateMode },
+                                        label = { Text(if (coordinateMode == DxfCoordinateSystem.CAD_Z_UP) "CAD Z-up"
+                                            else "AR raw", fontSize = 10.sp) }
+                                    )
+                                }
+                            }
+                            Text(tr("محاور DXF: خام AR أو CAD Z-up؛ الأصل محلي وليس مساحيًا.",
+                                "DXF axes: AR raw or CAD Z-up. Origin is local, not survey-controlled."),
+                                fontSize = 10.sp, color = paleBlue)
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 OutlinedButton(onClick = {
                                     if (measured != null) export(
                                         if (mode == ToolMode.LENGTH) "length_mm.dxf" else "area_mm.dxf",
-                                        Exports.dxf(vertices, mode == ToolMode.AREA)
+                                        Exports.dxf(vertices, mode == ToolMode.AREA, dxfCoordinates)
                                     )
-                                }, enabled = measured != null && isTracking, modifier = Modifier.weight(1f)) {
+                                }, enabled = measured != null && isTracking && anchorsStable, modifier = Modifier.weight(1f)) {
                                     Text(tr("تصدير DXF", "DXF"), fontSize = 12.sp)
                                 }
                                 OutlinedButton(onClick = {
@@ -518,7 +582,7 @@ private fun MeasureApp() {
                                         Exports.measurementCsv(if (mode == ToolMode.LENGTH) "LENGTH" else "AREA",
                                             vertices, measured, perimeter)
                                     )
-                                }, enabled = measured != null && isTracking, modifier = Modifier.weight(1f)) {
+                                }, enabled = measured != null && isTracking && anchorsStable, modifier = Modifier.weight(1f)) {
                                     Text(tr("تصدير CSV", "CSV"), fontSize = 12.sp)
                                 }
                             }
@@ -527,7 +591,7 @@ private fun MeasureApp() {
                                     onClick = { referenceInput = ""; referenceError = ""; referenceDialog = true }
                                 ) { Text(tr("التحقق بمقياس مرجعي", "Check against tape-measure reference"), fontSize = 12.sp) }
                             }
-                            if (mode == ToolMode.AREA && measured != null && isTracking) {
+                            if (mode == ToolMode.AREA && measured != null && isTracking && anchorsStable) {
                                 Spacer(Modifier.height(4.dp))
                                 HorizontalDivider()
                                 Text(
@@ -728,11 +792,18 @@ private fun MeasureApp() {
                     TextButton(onClick = {
                         val destination = pendingProjectId!!
                         pendingProjectId = null
-                        clearAnchors()
-                        resetScan()
-                        referenceResult = null
-                        projectStore.select(destination)
-                        projectId = destination
+                        uiScope.launch {
+                            try {
+                                withContext(Dispatchers.IO) { projectStore.select(destination) }
+                                clearAnchors()
+                                resetScan()
+                                referenceResult = null
+                                projectId = destination
+                            } catch (e: Exception) {
+                                message = tr("تعذر تغيير المشروع: ", "Project change failed: ") +
+                                    (e.localizedMessage ?: "")
+                            }
+                        }
                     }) { Text(tr("الانتقال", "Switch")) }
                 },
                 dismissButton = {
@@ -758,16 +829,25 @@ private fun MeasureApp() {
                     TextButton(onClick = {
                         try {
                             val data = backupRestoreData!!
-                            ProjectBackup.restore(context, data)
-                            clearAnchors()
-                            resetScan()
-                            projects = projectStore.load()
-                            projectId = projectStore.selectedId()
-                            savedRecords = store.load()
-                            unit = DisplayUnit.entries.firstOrNull {
-                                it.name == prefs.getString("unit", DisplayUnit.METRE.name)
-                            } ?: DisplayUnit.METRE
-                            message = tr("تمت استعادة المشاريع والقياسات.", "Projects and measurements restored.")
+                            uiScope.launch {
+                                try {
+                                    val snapshot = withContext(Dispatchers.IO) {
+                                        ProjectBackup.restore(context, data)
+                                        FieldDatabase.get(context).snapshot()
+                                    }
+                                    clearAnchors()
+                                    resetScan()
+                                    projects = snapshot.projects
+                                    projectId = snapshot.selectedProject
+                                    savedRecords = snapshot.measurements
+                                    unit = snapshot.unit
+                                    storageReady = true
+                                    message = tr("تمت استعادة المشاريع والقياسات.", "Projects and measurements restored.")
+                                } catch (e: Exception) {
+                                    message = tr("فشلت عملية الاستعادة: ", "Restore failed: ") +
+                                        (e.localizedMessage ?: "")
+                                }
+                            }
                         } catch (e: Exception) {
                             message = tr("فشلت عملية الاستعادة: ", "Restore failed: ") +
                                 (e.localizedMessage ?: "")
@@ -799,8 +879,14 @@ private fun MeasureApp() {
                                     if (project.id != projectId && (anchors.isNotEmpty() || sampler.count() > 0)) {
                                         pendingProjectId = project.id
                                     } else {
-                                        projectStore.select(project.id)
-                                        projectId = project.id
+                                        uiScope.launch {
+                                            try {
+                                                withContext(Dispatchers.IO) { projectStore.select(project.id) }
+                                                projectId = project.id
+                                            } catch (e: Exception) {
+                                                projectError = e.localizedMessage ?: "Project selection failed"
+                                            }
+                                        }
                                     }
                                     projectPicker = false
                                 },
@@ -827,12 +913,22 @@ private fun MeasureApp() {
                                     if (arabic) "احفظ القياسات أو امسحها قبل إنشاء مشروع." else
                                         "Save or clear the current measurement before creating a project."
                                 }
-                                val project = projectStore.create(projectInput)
-                                projects = projectStore.load()
-                                projectId = project.id
-                                projectInput = ""
-                                projectError = ""
-                                projectPicker = false
+                                val nameToCreate = projectInput
+                                uiScope.launch {
+                                    try {
+                                        val (created, updatedProjects) = withContext(Dispatchers.IO) {
+                                            val project = projectStore.create(nameToCreate)
+                                            project to projectStore.load()
+                                        }
+                                        projects = updatedProjects
+                                        projectId = created.id
+                                        projectInput = ""
+                                        projectError = ""
+                                        projectPicker = false
+                                    } catch (e: Exception) {
+                                        projectError = e.localizedMessage ?: "Project creation failed"
+                                    }
+                                }
                             } catch (e: Exception) {
                                 projectError = e.localizedMessage ?: tr("اسم المشروع غير صالح", "Invalid project name")
                             }
@@ -845,10 +941,13 @@ private fun MeasureApp() {
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             TextButton(onClick = {
-                                try {
-                                    export("BIMMeasure3D-all-projects-backup.json", ProjectBackup.export(context))
-                                } catch (e: Exception) {
-                                    projectError = e.localizedMessage ?: "Backup failed"
+                                uiScope.launch {
+                                    try {
+                                        val data = withContext(Dispatchers.IO) { ProjectBackup.export(context) }
+                                        export("BIMMeasure3D-all-projects-backup.json", data)
+                                    } catch (e: Exception) {
+                                        projectError = e.localizedMessage ?: "Backup failed"
+                                    }
                                 }
                             }) { Text(tr("تصدير نسخة", "Export backup")) }
                             TextButton(onClick = {
@@ -916,7 +1015,7 @@ private fun MeasureApp() {
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 TextButton(onClick = {
                                     export("measurement_${record.id.take(8)}.dxf",
-                                        Exports.dxf(record.points, record.kind == "AREA"))
+                                        Exports.dxf(record.points, record.kind == "AREA", dxfCoordinates))
                                 }) { Text("DXF") }
                                 TextButton(onClick = {
                                     export("measurement_${record.id.take(8)}.csv",
@@ -924,8 +1023,17 @@ private fun MeasureApp() {
                                             record.valueMeters, record.perimeterMeters))
                                 }) { Text("CSV") }
                                 TextButton(onClick = {
-                                    store.delete(record.id)
-                                    savedRecords = store.load()
+                                    uiScope.launch {
+                                        try {
+                                            savedRecords = withContext(Dispatchers.IO) {
+                                                store.delete(record.id)
+                                                store.load()
+                                            }
+                                        } catch (e: Exception) {
+                                            message = tr("تعذر حذف السجل: ", "Delete failed: ") +
+                                                (e.localizedMessage ?: "")
+                                        }
+                                    }
                                 }) { Text(tr("حذف", "Delete"), color = warningAmber) }
                             }
                         }

@@ -35,12 +35,13 @@ object Exports {
         return lines.toString().toByteArray(Charsets.UTF_8)
     }
 
-    fun dxf(points: List<Vec3>, closed: Boolean): ByteArray {
+    fun dxf(points: List<Vec3>, closed: Boolean, axes: DxfCoordinateSystem = DxfCoordinateSystem.ARCORE_RAW): ByteArray {
         require(points.size >= 2 && points.all { it.isFinite() })
         val output = StringBuilder("0\nSECTION\n2\nHEADER\n9\n\u0024ACADVER\n1\nAC1015\n9\n\u0024INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n")
+        output.append("999\\nBIMMeasure3D local session; coordinate axes: ${axes.name}; units: mm\\n")
         for (i in 0 until (if (closed) points.size else points.size - 1)) {
-            val a = points[i]
-            val b = points[(i + 1) % points.size]
+            val a = CadAxes.fromArCore(points[i], axes)
+            val b = CadAxes.fromArCore(points[(i + 1) % points.size], axes)
             output.append("0\nLINE\n8\nBIM_MEASURE\n")
             output.append("10\n${number(a.x * 1000)}\n20\n${number(a.y * 1000)}\n30\n${number(a.z * 1000)}\n")
             output.append("11\n${number(b.x * 1000)}\n21\n${number(b.y * 1000)}\n31\n${number(b.z * 1000)}\n")
