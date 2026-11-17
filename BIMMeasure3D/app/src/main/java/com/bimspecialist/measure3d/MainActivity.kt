@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.sp
 import com.bimspecialist.measure3d.core.*
 import com.google.ar.core.Anchor
 import com.google.ar.core.Config
+import com.google.ar.core.DepthPoint
 import com.google.ar.core.Frame
 import com.google.ar.core.Plane
 import com.google.ar.core.Point
@@ -120,6 +121,7 @@ private fun MeasureApp() {
     var showManual by rememberSaveable { mutableStateOf(false) }
     var manualSaving by remember { mutableStateOf(false) }
     var manualLastSaved by remember { mutableStateOf<ManualMeasurement?>(null) }
+    var manualLastSavedProjectId by remember { mutableStateOf<String?>(null) }
     var manualNotice by remember { mutableStateOf<String?>(null) }
     var arCapability by remember { mutableStateOf(ArCapability.CHECKING) }
     var arCheckRequest by remember { mutableIntStateOf(0) }
@@ -160,6 +162,13 @@ private fun MeasureApp() {
     var scanCount by remember { mutableIntStateOf(0) }
     var preview by remember { mutableStateOf<List<Vec3>?>(null) }
     val frameRef = remember { arrayOfNulls<Frame>(1) }
+    val sessionRef = remember { arrayOfNulls<com.google.ar.core.Session>(1) }
+    // The view's AR anchors are transient and cannot be persisted across activity recreation.
+    var draftCaptureExists by rememberSaveable { mutableStateOf(false) }
+    var captureRestartNotice by rememberSaveable { mutableStateOf(false) }
+    var captureRevision by remember { mutableIntStateOf(0) }
+    var savedCaptureKey by remember { mutableStateOf<String?>(null) }
+    var savingCapture by remember { mutableStateOf(false) }
     var pendingPlacement by remember { mutableStateOf<ScreenPoint?>(null) }
     val updateNanos = remember { longArrayOf(0L) }
     val frameCounter = remember { intArrayOf(0) }
@@ -169,6 +178,16 @@ private fun MeasureApp() {
     var isTracking by remember { mutableStateOf(false) }
     var anchorsStable by remember { mutableStateOf(false) }
     val stability = remember { ArStabilityMonitor() }
+    LaunchedEffect(Unit) {
+        // SavedState survives rotation/process recreation, but ARCore anchors don't.
+        // Tell the user rather than showing an apparently resumed empty measurement.
+        if (CaptureLifecyclePolicy.shouldWarnAfterRecreation(
+                draftCaptureExists, anchors.size, sampler.count()
+            )) {
+            draftCaptureExists = false
+            captureRestartNotice = true
+        }
+    }
     var message by remember { mutableStateOf(tr(
         "حرّك الهاتف لاكتشاف السطح، ثم انقر لتثبيت نقاط القياس.",
         "Move the phone to detect a plane, then tap to place measurement points."
@@ -249,6 +268,9 @@ private fun MeasureApp() {
         stability.reset()
         anchorsStable = false
         overlay = emptyList()
+        captureRevision++
+        savedCaptureKey = null
+        draftCaptureExists = sampler.count() > 0
     }
     fun resetScan() {
         scanStats = null
@@ -257,6 +279,7 @@ private fun MeasureApp() {
         sampler.clear()
         scanCount = 0
         frameCounter[0] = 0
+        draftCaptureExists = anchors.isNotEmpty()
     }
     fun switchNow(next: ToolMode) {
         clearAnchors()
@@ -327,7 +350,11 @@ private fun MeasureApp() {
         Geometry.perimeter(vertices, closed = true) else null
 
     fun saveManualMeasurement(result: ManualMeasurement) {
-        if (!storageReady || manualSaving || manualLastSaved == result) return
+        if (!storageReady || manualSaving ||
+            RecordSavePolicy.manualAlreadySaved(
+                result, projectId, manualLastSaved, manualLastSavedProjectId
+            )) return
+        val destination = projectId
         manualSaving = true
         manualNotice = null
         uiScope.launch {
@@ -335,12 +362,13 @@ private fun MeasureApp() {
                 val updatedRecords = withContext(Dispatchers.IO) {
                     store.add(
                         result.kind, result.valueMetresOrSquareMetres,
-                        result.perimeterMetres, result.points, projectId, source = "MANUAL"
+                        result.perimeterMetres, result.points, destination, source = "MANUAL"
                     )
                     store.load()
                 }
                 savedRecords = updatedRecords
                 manualLastSaved = result
+                manualLastSavedProjectId = destination
                 manualNotice = tr("تم حفظ القياس اليدوي في المشروع.",
                     "Manual measurement saved to your project.")
             } catch (e: Exception) {
@@ -374,10 +402,18 @@ private fun MeasureApp() {
 
     fun saveCurrent() {
         val value = measured ?: return
-        if (!storageReady || !isTracking || !anchorsStable) return
+        val revisionAtSave = captureRevision
+        val destination = projectId
+        val captureKey = RecordSavePolicy.captureKey(destination, mode, revisionAtSave)
+        if (!RecordSavePolicy.canSaveCapture(
+                mode, true, isTracking, anchorsStable, storageReady,
+                savingCapture, captureKey, savedCaptureKey
+            )) return
+        // Flip synchronously before launching the coroutine, so rapid repeated taps
+        // cannot enqueue two inserts for the same measurement.
+        savingCapture = true
         val kind = if (mode == ToolMode.LENGTH) "LENGTH" else "AREA"
         val pointsSnapshot = vertices.toList()
-        val destination = projectId
         val measuredPerimeter = perimeter
         uiScope.launch {
             try {
@@ -385,10 +421,16 @@ private fun MeasureApp() {
                     store.add(kind, value, measuredPerimeter, pointsSnapshot, destination)
                     store.load()
                 }
+                if (captureRevision == revisionAtSave && projectId == destination) {
+                    savedCaptureKey = captureKey
+                    draftCaptureExists = false
+                }
                 message = tr("تم حفظ القياس محليًا في السجل.", "Measurement saved locally.")
             } catch (e: Exception) {
                 message = tr("فشل الحفظ، ولم تُحذف القياسات القديمة: ",
                     "Save failed without overwriting previous records: ") + (e.localizedMessage ?: "")
+            } finally {
+                savingCapture = false
             }
         }
     }
@@ -415,9 +457,11 @@ private fun MeasureApp() {
                 arabic = arabic,
                 projectName = if (projectId == "general") tr("عام", "General")
                     else projects.firstOrNull { it.id == projectId }?.name ?: "General",
+                projectId = projectId,
                 storageReady = storageReady,
                 isSaving = manualSaving,
                 lastSaved = manualLastSaved,
+                lastSavedProjectId = manualLastSavedProjectId,
                 notice = manualNotice,
                 onBack = { showManual = false },
                 onHistory = { showHistory = true },
@@ -488,8 +532,30 @@ private fun MeasureApp() {
         }) {
             ARSceneView(
                 modifier = Modifier.fillMaxSize(),
-                depthMode = Config.DepthMode.DISABLED,
+                // SceneView gates unsupported depth modes; the explicit session config
+                // also retains DISABLED on hardware lacking the Depth API.
+                depthMode = Config.DepthMode.AUTOMATIC,
+                sessionConfiguration = { session, config ->
+                    config.depthMode =
+                        if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC))
+                            Config.DepthMode.AUTOMATIC
+                        else Config.DepthMode.DISABLED
+                    config.instantPlacementMode = Config.InstantPlacementMode.DISABLED
+                },
                 planeRenderer = mode != ToolMode.SCAN,
+                onSessionCreated = { session ->
+                    val previous = sessionRef[0]
+                    if (CaptureLifecyclePolicy.shouldDiscardForNewSession(
+                            previous != null && previous !== session,
+                            anchors.size, sampler.count()
+                        )) {
+                        // Anchors from a different AR session must not be reused.
+                        clearAnchors()
+                        resetScan()
+                        captureRestartNotice = true
+                    }
+                    sessionRef[0] = session
+                },
                 onSessionFailed = { e ->
                     isTracking = false
                     anchorsStable = false
@@ -497,6 +563,12 @@ private fun MeasureApp() {
                     frameRef[0] = null
                     overlay = emptyList()
                     scanning = false
+                    if (anchors.isNotEmpty() || sampler.count() > 0) {
+                        clearAnchors()
+                        resetScan()
+                        captureRestartNotice = true
+                    }
+                    sessionRef[0] = null
                     arCapability = ArCapability.SESSION_FAILED
                     showArHelp = true
                     message = tr("تعذر تشغيل ARCore: ", "ARCore unavailable: ") +
@@ -527,7 +599,16 @@ private fun MeasureApp() {
                                         insidePlane = plane.isPoseInPolygon(candidate.hitPose)
                                     )
                                 }
-                                val featureFallback = if (mode == ToolMode.LENGTH && hitOnPlane == null) {
+                                val depthFallback = if (mode == ToolMode.LENGTH && hitOnPlane == null) {
+                                    hits.firstOrNull { candidate ->
+                                        val depthPoint = candidate.trackable as? DepthPoint
+                                        depthPoint != null && PointPlacementPolicy.isAcceptableHit(
+                                            "DEPTH", depthPoint.trackingState == TrackingState.TRACKING
+                                        )
+                                    }
+                                } else null
+                                val featureFallback = if (mode == ToolMode.LENGTH &&
+                                    hitOnPlane == null && depthFallback == null) {
                                     hits.firstOrNull { candidate ->
                                         val point = candidate.trackable as? Point
                                         point != null && PointPlacementPolicy.isAcceptableHit(
@@ -537,7 +618,7 @@ private fun MeasureApp() {
                                         )
                                     }
                                 } else null
-                                val hit = hitOnPlane ?: featureFallback
+                                val hit = hitOnPlane ?: depthFallback ?: featureFallback
                                 if (hit == null) {
                                     message = tr(
                                         "لم يتم العثور على نقطة ثابتة. وجّه علامة + إلى أرضية أو جدار واضح وأعد المحاولة.",
@@ -568,6 +649,9 @@ private fun MeasureApp() {
                                                 "The next point is too close. Aim at another location.")
                                         else -> {
                                             anchors.add(hit.createAnchor())
+                                            captureRevision++
+                                            savedCaptureKey = null
+                                            draftCaptureExists = true
                                             stability.reset()
                                             anchorsStable = false
                                             referenceResult = null
@@ -631,6 +715,7 @@ private fun MeasureApp() {
                                     }
                                 }
                                 scanCount = sampler.count()
+                                if (scanCount > 0) draftCaptureExists = true
                                 if (sampler.isFull()) {
                                     scanning = false
                                     message = tr("وصلت إلى الحد الأعلى للنقاط. صدّر السحابة الآن.", "Point limit reached. Export the cloud.")
@@ -825,6 +910,9 @@ private fun MeasureApp() {
                                     if (anchors.isNotEmpty()) {
                                         referenceResult = null
                                         anchors.removeAt(anchors.lastIndex).detach()
+                                        captureRevision++
+                                        savedCaptureKey = null
+                                        draftCaptureExists = anchors.isNotEmpty() || sampler.count() > 0
                                         stability.reset()
                                         anchorsStable = false
                                         overlay = emptyList()
@@ -837,7 +925,12 @@ private fun MeasureApp() {
                                     modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 3.dp)) {
                                     Text(tr("مسح", "Clear"), fontSize = 12.sp)
                                 }
-                                Button(onClick = { saveCurrent() }, enabled = measured != null && isTracking && anchorsStable && storageReady,
+                                Button(onClick = { saveCurrent() }, enabled = RecordSavePolicy.canSaveCapture(
+                                        mode, measured != null, isTracking, anchorsStable,
+                                        storageReady, savingCapture,
+                                        RecordSavePolicy.captureKey(projectId, mode, captureRevision),
+                                        savedCaptureKey
+                                    ),
                                     modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 3.dp)) {
                                     Text(tr("حفظ", "Save"), fontSize = 12.sp)
                                 }
@@ -1025,6 +1118,10 @@ private fun MeasureApp() {
                     onHome = { requestHome() },
                     onMore = { showAdvanced = true },
                     onHistory = { showHistory = true },
+                    savingCapture = savingCapture,
+                    captureAlreadySaved = savedCaptureKey == RecordSavePolicy.captureKey(
+                        projectId, mode, captureRevision
+                    ),
                     onPlacePoint = { xFraction, yFraction ->
                         requestPlacement(xFraction, yFraction)
                     },
@@ -1032,6 +1129,9 @@ private fun MeasureApp() {
                         if (anchors.isNotEmpty()) {
                             referenceResult = null
                             anchors.removeAt(anchors.lastIndex).detach()
+                            captureRevision++
+                            savedCaptureKey = null
+                            draftCaptureExists = anchors.isNotEmpty() || sampler.count() > 0
                             stability.reset()
                             anchorsStable = false
                             overlay = emptyList()
@@ -1080,6 +1180,21 @@ private fun MeasureApp() {
         }
         }
 
+        if (captureRestartNotice) {
+            AlertDialog(
+                onDismissRequest = { captureRestartNotice = false },
+                title = { Text(tr("تمت إعادة تشغيل جلسة الكاميرا", "AR session restarted")) },
+                text = { Text(tr(
+                    "تعذر استعادة نقاط القياس غير المحفوظة بعد تدوير الهاتف أو إعادة تشغيل ARCore. السجلات المحفوظة في المشاريع لم تُحذف. ابدأ تحديد النقاط من جديد.",
+                    "Unsaved AR points cannot be restored after rotation or an ARCore session restart. Previously saved project records are safe. Place new points to continue."
+                )) },
+                confirmButton = {
+                    TextButton(onClick = { captureRestartNotice = false }) {
+                        Text(tr("فهمت", "Understood"))
+                    }
+                }
+            )
+        }
         if (showArHelp) {
             AlertDialog(
                 onDismissRequest = { showArHelp = false },

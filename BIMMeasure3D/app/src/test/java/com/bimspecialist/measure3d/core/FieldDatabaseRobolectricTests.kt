@@ -171,4 +171,21 @@ class FieldDatabaseRobolectricTests {
         assertEquals(1, restored.measurements.count { it.source == "ARCORE" })
     }
 
+    @Test fun identicalManualDimensionsInSeparateProjectsAreBothRetained() {
+        val db = FieldDatabase.get(context)
+        val firstProject = db.createProject("Site Alpha")
+        db.addMeasurement("LENGTH", 1.25, null, demoPoints(), firstProject.id, source = "MANUAL")
+
+        val secondProject = db.createProject("Site Beta")
+        db.addMeasurement("LENGTH", 1.25, null, demoPoints(), secondProject.id, source = "MANUAL")
+
+        val records = db.measurements()
+        assertEquals(2, records.size)
+        assertEquals(2, records.map { it.projectId }.distinct().size)
+        assertTrue(records.all { it.source == "MANUAL" && it.valueMeters == 1.25 })
+        val archive = SnapshotCodec.decode(ProjectBackup.export(context))
+        assertEquals(2, archive.measurements.size)
+        assertEquals(2, archive.measurements.map { it.projectId }.distinct().size)
+    }
+
 }

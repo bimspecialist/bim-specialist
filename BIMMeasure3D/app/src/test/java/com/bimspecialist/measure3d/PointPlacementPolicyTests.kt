@@ -41,7 +41,8 @@ class PointPlacementPolicyTests {
         assertFalse(PointPlacementPolicy.isAcceptableHit("PLANE", false, insidePlane = true))
         assertTrue(PointPlacementPolicy.isAcceptableHit("FEATURE", true, estimatedNormal = true))
         assertFalse(PointPlacementPolicy.isAcceptableHit("FEATURE", true, estimatedNormal = false))
-        assertFalse(PointPlacementPolicy.isAcceptableHit("DEPTH", true))
+        assertTrue(PointPlacementPolicy.isAcceptableHit("DEPTH", true))
+        assertFalse(PointPlacementPolicy.isAcceptableHit("DEPTH", false))
     }
 
     @Test fun rejectsInvalidViewportAndNegativePanel() {

@@ -1,6 +1,37 @@
-# BIM Measure 3D · v0.7.1 Beta
+# BIM Measure 3D · v0.7.2 Beta
 
 Experimental Android engineering measurement and modeling app by BIM Specialist.
+
+## Focused reliability fixes (v0.7.2 Beta)
+
+This patch follows a focused code audit: do not delete or migrate existing records unnecessarily.
+
+### Better capture on supported devices
+
+- AR length measurement still prefers an in-bounds, actively tracked ARCore **Plane**. If none is found, it tries a tracked **DepthPoint** when ARCore reports Depth API support; a tracked oriented **Point** remains the last fallback.
+- Depth is enabled only if the active session supports `Config.DepthMode.AUTOMATIC`, and Instant Placement is explicitly disabled because initial distance estimates may jump.
+- The original two-step crosshair flow remains: **Place start point**, **Place end point**, then wait for stable tracking and save.
+- Depth support on the Infinix GT 20 Pro and physical measurement accuracy are **UNVERIFIED** until a supported real-device test.
+
+### No accidental duplicate records
+
+- An in-flight AR save disables further submissions until the database write completes, and the same capture revision cannot be saved a second time without changing its points.
+- Undo, clearing points, placing a new point, or switching capture mode produces a new capture revision.
+- Manual measurements now record both the value and the current **project ID** in the save receipt. Entering the same length in a different project no longer incorrectly disables Save.
+- Database writes still run on `Dispatchers.IO` and existing JSON backups remain compatible.
+
+### Rotation and session restarts
+
+- Uncommitted AR anchors are never treated as persistent. On Android activity recreation (including rotation), a saved draft flag detects a lost anchor set and shows an explicit bilingual warning; previously saved database measurements remain intact.
+- On the same activity's background/resume, camera tracking is reset and must stabilize again. If SceneView creates a **different ARCore session** while old anchors or cloud points exist, the draft is discarded with a clear warning rather than silently measuring from incompatible world coordinates.
+- No claim is made that ARCore anchors survive process death or that on-device accuracy was measured.
+
+### Acceptance and rollback
+
+- Run `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` and verify the APK package and signature.
+- Tests cover duplicate AR taps, project-scoped manual receipts, loss-of-draft warning conditions, optional depth acceptance, and Robolectric persistence for identical manual dimensions across different projects.
+- Before applying on a phone, export a project backup. CI Debug signing is ephemeral and may be incompatible with previous installed APKs.
+- Previous known-good source: `bim-measure-3d-android-build` at commit `33dc72c036779091ccd954df4881dda23731816d`; do not push to `main`.
 
 ## Two-point camera measurement on the phone (v0.7.1)
 
@@ -169,3 +200,5 @@ JDK 21, Gradle 8.13, Android SDK 36, Android Gradle Plugin 8.13.2, Kotlin 2.3.21
 - `0.7.0-beta`: AR Optional device checks, offline manual tape dimensions, record provenance and non-destructive SQLite schema migration.
 
 - `0.7.1-beta`: aim crosshair, button-based start/end point placement on current ARCore frames, tracked feature-point fallback for length and new placement tests.
+
+- `0.7.2-beta`: optional ARCore depth-hit fallback, save de-duplication, project-scoped manual saving, and explicit AR restart warnings.

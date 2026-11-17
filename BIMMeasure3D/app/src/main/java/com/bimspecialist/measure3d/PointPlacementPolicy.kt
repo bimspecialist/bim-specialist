@@ -33,6 +33,7 @@ internal object PointPlacementPolicy {
         // A properly oriented feature point is a fallback if no tracked plane is found.
         // Approximate geometry still needs external validation.
         "FEATURE" -> estimatedNormal
+        "DEPTH" -> true
         else -> false
     }
 }

@@ -352,6 +352,8 @@ internal fun ModernCameraOverlay(
     anchorsStable: Boolean,
     storageReady: Boolean,
     statusMessage: String,
+    savingCapture: Boolean,
+    captureAlreadySaved: Boolean,
     onHome: () -> Unit,
     onMore: () -> Unit,
     onHistory: () -> Unit,
@@ -372,7 +374,7 @@ internal fun ModernCameraOverlay(
     }
     val ready = CaptureUiPolicy.canSaveMeasurement(
         mode, measured != null, isTracking, anchorsStable, storageReady
-    )
+    ) && !savingCapture && !captureAlreadySaved
     val dataReady = CaptureUiPolicy.canExport(
         mode, measured != null, isTracking, anchorsStable, storageReady,
         scanCount, scanning
@@ -590,7 +592,11 @@ internal fun ModernCameraOverlay(
                     colors = ButtonDefaults.buttonColors(containerColor = electric),
                     shape = RoundedCornerShape(15.dp)
                 ) {
-                    Text(tr("حفظ القياس", "Save measurement"),
+                    Text(when {
+                        savingCapture -> tr("جارٍ الحفظ...", "Saving...")
+                        captureAlreadySaved -> tr("تم حفظ هذا القياس", "Measurement saved")
+                        else -> tr("حفظ القياس", "Save measurement")
+                    },
                         fontWeight = FontWeight.Bold, fontSize = 16.sp,
                         color = if (ready) navy else Color.LightGray)
                 }

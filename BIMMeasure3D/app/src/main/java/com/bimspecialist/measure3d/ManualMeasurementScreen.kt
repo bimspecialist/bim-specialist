@@ -32,9 +32,11 @@ import com.bimspecialist.measure3d.core.*
 internal fun ManualMeasurementScreen(
     arabic: Boolean,
     projectName: String,
+    projectId: String,
     storageReady: Boolean,
     isSaving: Boolean,
     lastSaved: ManualMeasurement?,
+    lastSavedProjectId: String?,
     notice: String?,
     onBack: () -> Unit,
     onHistory: () -> Unit,
@@ -48,7 +50,9 @@ internal fun ManualMeasurementScreen(
     val calculated = remember(mode, unit, lengthText, widthText) {
         runCatching { ManualMeasurementCalculator.calculate(mode, lengthText, widthText, unit) }.getOrNull()
     }
-    val alreadySaved = calculated != null && calculated == lastSaved
+    val alreadySaved = RecordSavePolicy.manualAlreadySaved(
+        calculated, projectId, lastSaved, lastSavedProjectId
+    )
 
     BoxWithConstraints(
         Modifier.fillMaxSize()
